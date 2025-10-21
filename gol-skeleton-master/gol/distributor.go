@@ -13,6 +13,10 @@ type distributorChannels struct {
 func distributor(p Params, c distributorChannels) {
 
 	// TODO: Create a 2D slice to store the world.
+	world := make([][]uint8, p.ImageHeight)
+	for i := range world {
+		world[i] = make([]uint8, p.ImageWidth)
+	}
 
 	turn := 0
 	c.events <- StateChange{turn, Executing}
