@@ -1,6 +1,10 @@
 package gol
 
-import "uk.ac.bris.cs/gameoflife/util"
+import (
+	"fmt"
+
+	"uk.ac.bris.cs/gameoflife/util"
+)
 
 type distributorChannels struct {
 	events     chan<- Event
@@ -25,7 +29,7 @@ func distributor(p Params, c distributorChannels) {
 
 	//make Io read the init graph,filename can be 16x16, 64x64 etc.
 	c.ioCommand <- ioInput
-	c.ioFilename <- "16x16"
+	c.ioFilename <- fmt.Sprintf("%dx%d", p.ImageWidth, p.ImageHeight)
 
 	//receive pixel from Io
 	for i := 0; i < p.ImageHeight; i++ {
@@ -97,7 +101,7 @@ func distributor(p Params, c distributorChannels) {
 
 	//output the new graph
 	c.ioCommand <- ioOutput
-	c.ioFilename <- "16x16"
+	c.ioFilename <- fmt.Sprintf("%dx%d", p.ImageWidth, p.ImageHeight)
 	for y := 0; y < p.ImageHeight; y++ {
 		for x := 0; x < p.ImageWidth; x++ {
 			c.ioOutput <- world[y][x]
