@@ -50,16 +50,17 @@ func distributor(p Params, c distributorChannels) {
 					count := 0
 					offestX := [3]int{-1, 0, 1}
 					offestY := [3]int{-1, 0, 1}
-					for dy := range offestY {
-						for dx := range offestX {
+					for _, dy := range offestY {
+						for _, dx := range offestX {
 							//count except itself
-							if dy != 0 && dx != 0 {
-								//calculate neighbour coordinate
-								nY := (y + dy + p.ImageHeight) % p.ImageHeight
-								nX := (x + dx + p.ImageWidth) % p.ImageWidth
-								if world[nY][nX] == 255 {
-									count++
-								}
+							if dy == 0 && dx == 0 {
+								continue
+							}
+							//calculate neighbour coordinate
+							nY := (y + dy + p.ImageHeight) % p.ImageHeight
+							nX := (x + dx + p.ImageWidth) % p.ImageWidth
+							if world[nY][nX] == 255 {
+								count++
 							}
 						}
 					}
@@ -72,7 +73,7 @@ func distributor(p Params, c distributorChannels) {
 					if aliveNeighbours < 2 {
 						//any live cell with fewer than two live neighbours dies
 						newWorld[y][x] = 0
-					} else if aliveNeighbours < 3 {
+					} else if aliveNeighbours <= 3 {
 						//any live cell with two or three live neighbours is unaffected
 						newWorld[y][x] = 255
 					} else {
@@ -87,11 +88,11 @@ func distributor(p Params, c distributorChannels) {
 						newWorld[y][x] = 255
 					}
 				}
-
-				//updates world
-				world = newWorld
 			}
 		}
+		//updates world
+		world = newWorld
+		turn++
 	}
 
 	//output the new graph
