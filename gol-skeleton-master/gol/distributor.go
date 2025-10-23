@@ -38,8 +38,29 @@ func calcAliveNeighbours(x, y int, world [][]uint8, p Params) int {
 	return count
 }
 
+// saveCurWorld is used to save current world
+func saveCurWorld(p Params, c distributorChannels, world [][]uint8, turn int) {
+	filename := fmt.Sprintf("%dx%dx%d", p.ImageWidth, p.ImageHeight, turn)
+	//output the new graph
+	c.ioCommand <- ioOutput
+	c.ioFilename <- fmt.Sprintf(filename)
+	for y := 0; y < p.ImageHeight; y++ {
+		for x := 0; x < p.ImageWidth; x++ {
+			c.ioOutput <- world[y][x]
+		}
+	}
+
+	c.ioCommand <- ioCheckIdle
+	<-c.ioIdle
+
+	c.events <- ImageOutputComplete{
+		CompletedTurns: turn,
+		Filename:       filename,
+	}
+}
+
 // distributor divides the work between workers and interacts with other goroutines.
-func distributor(p Params, c distributorChannels) {
+func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 	// TODO: Create a 2D slice to store the world.
 	world := make([][]uint8, p.ImageHeight)
@@ -155,8 +176,41 @@ func distributor(p Params, c distributorChannels) {
 
 		}()
 	}
+
 	// TODO: Execute all turns of the Game of Life.
-	for turn < p.Turns {
+	quitSignal := false
+	state := Executing
+	for turn < p.Turns && !quitSignal {
+		//deal with keyboard pressing stuff
+		select {
+		//read the keypress
+		case key := <-keyPresses:
+			switch key {
+			case 's':
+				//If s is pressed, save the current state of the board as a PGM image
+				saveCurWorld(p, c, world, turn)
+			case 'q':
+				//If q is pressed, stop executing Gol computation, save the current state of the board as a PGM image, then terminate the program.
+				saveCurWorld(p, c, world, turn)
+				quitSignal = true
+				continue
+			case 'p':
+				//If p is pressed, pause the processing and send a StateChange event.
+				//When p is pressed again, resume the processing and send a StateChange event.
+				if state == Executing {
+					state = Paused
+				} else {
+					state = Executing
+				}
+				c.events <- StateChange{turn, state}
+			}
+		default:
+		}
+		if state == Paused {
+			time.Sleep(100 * time.Millisecond)
+			c.events <- TurnComplete{CompletedTurns: turn}
+			continue
+		}
 		//record next state
 		newWorld := make([][]uint8, p.ImageHeight)
 		for i := range newWorld {
@@ -187,21 +241,30 @@ func distributor(p Params, c distributorChannels) {
 				newWorld[finalRes.startY+j] = row
 			}
 		}
+
+		for y := 0; y < p.ImageHeight; y++ {
+			for x := 0; x < p.ImageWidth; x++ {
+				if world[y][x] != newWorld[y][x] {
+					c.events <- CellFlipped{
+						CompletedTurns: turn,
+						Cell:           util.Cell{X: x, Y: y},
+					}
+				}
+			}
+		}
 		//updates world
 		world = newWorld
 		turn++
+
+		c.events <- TurnComplete{CompletedTurns: turn}
 	}
 
 	//ensure time ticker stop
 	done <- true
 
-	//output the new graph
-	c.ioCommand <- ioOutput
-	c.ioFilename <- fmt.Sprintf("%dx%dx%d", p.ImageWidth, p.ImageHeight, p.Turns)
-	for y := 0; y < p.ImageHeight; y++ {
-		for x := 0; x < p.ImageWidth; x++ {
-			c.ioOutput <- world[y][x]
-		}
+	//output the graph if program ending
+	if !quitSignal {
+		saveCurWorld(p, c, world, turn)
 	}
 
 	// TODO: Report the final state using FinalTurnCompleteEvent.
