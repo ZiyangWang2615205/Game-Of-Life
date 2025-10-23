@@ -15,6 +15,28 @@ type distributorChannels struct {
 	ioInput    <-chan uint8
 }
 
+// calcAliveNeighbours counts the number of alive neighbours
+func calcAliveNeighbours(x, y int, world [][]uint8, p Params) int {
+	count := 0
+	offestX := [3]int{-1, 0, 1}
+	offestY := [3]int{-1, 0, 1}
+	for _, dy := range offestY {
+		for _, dx := range offestX {
+			//count except itself
+			if dy == 0 && dx == 0 {
+				continue
+			}
+			//calculate neighbour coordinate
+			nY := (y + dy + p.ImageHeight) % p.ImageHeight
+			nX := (x + dx + p.ImageWidth) % p.ImageWidth
+			if world[nY][nX] == 255 {
+				count++
+			}
+		}
+	}
+	return count
+}
+
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels) {
 
@@ -38,6 +60,71 @@ func distributor(p Params, c distributorChannels) {
 		}
 	}
 
+	//workJob type helps us to distribute job
+	type workerJob struct {
+		startY int
+		endY   int
+		world  [][]uint8
+	}
+
+	//workerRes type helps to return the res to distributor
+	type workerRes struct {
+		startY int
+		rowRes [][]uint8
+	}
+
+	//create channel
+	jobs := make(chan workerJob, p.Threads)
+	res := make(chan workerRes, p.Threads)
+
+	//start workers
+	for i := 0; i < p.Threads; i++ {
+		go func() {
+			//receive the job from jobs channel
+			for job := range jobs {
+				startY := job.startY
+				endY := job.endY
+				//tell worker which area belongs to him
+				workerArea := make([][]uint8, endY-startY)
+				for index := range workerArea {
+					workerArea[index] = make([]uint8, p.ImageWidth)
+				}
+				//do the job
+				for y := startY; y < endY; y++ {
+					for x := 0; x < p.ImageWidth; x++ {
+						aliveNeighbours := calcAliveNeighbours(x, y, job.world, p)
+						//judge stage
+						//0-die, 255-alive
+						if job.world[y][x] == 255 {
+							if aliveNeighbours < 2 {
+								//any live cell with fewer than two live neighbours dies
+								workerArea[y-startY][x] = 0
+							} else if aliveNeighbours <= 3 {
+								//any live cell with two or three live neighbours is unaffected
+								workerArea[y-startY][x] = 255
+							} else {
+								//any live cell with more than three live neighbours dies
+								workerArea[y-startY][x] = 0
+							}
+						}
+
+						if job.world[y][x] == 0 {
+							//any dead cell with exactly three live neighbours becomes alive
+							if aliveNeighbours == 3 {
+								workerArea[y-startY][x] = 255
+							}
+						}
+					}
+				}
+				//res channel to receive the return of each worker
+				res <- workerRes{
+					startY: startY,
+					rowRes: workerArea,
+				}
+			}
+
+		}()
+	}
 	// TODO: Execute all turns of the Game of Life.
 	for turn < p.Turns {
 		//record next state
@@ -46,52 +133,28 @@ func distributor(p Params, c distributorChannels) {
 			newWorld[i] = make([]uint8, p.ImageWidth)
 		}
 
-		//transverse cells and judge state by rule
-		for y := 0; y < p.ImageHeight; y++ {
-			for x := 0; x < p.ImageWidth; x++ {
-				//use aux to calculate alive neighbours
-				aliveNeighbours := func(x, y int, world [][]uint8, p Params) int {
-					count := 0
-					offestX := [3]int{-1, 0, 1}
-					offestY := [3]int{-1, 0, 1}
-					for _, dy := range offestY {
-						for _, dx := range offestX {
-							//count except itself
-							if dy == 0 && dx == 0 {
-								continue
-							}
-							//calculate neighbour coordinate
-							nY := (y + dy + p.ImageHeight) % p.ImageHeight
-							nX := (x + dx + p.ImageWidth) % p.ImageWidth
-							if world[nY][nX] == 255 {
-								count++
-							}
-						}
-					}
-					return count
-				}(x, y, world, p)
+		//distribute the job to thread
+		chunk := p.ImageHeight / p.Threads
+		for i := 0; i < p.Threads; i++ {
+			//init start and end
+			startY := i * chunk
+			endY := startY + chunk
+			//ensure if the last part could not be divided equally
+			if i == p.Threads-1 {
+				endY = p.ImageHeight
+			}
+			jobs <- workerJob{
+				startY: startY,
+				endY:   endY,
+				world:  world,
+			}
+		}
 
-				//judge stage
-				//0-die, 255-alive
-				if world[y][x] == 255 {
-					if aliveNeighbours < 2 {
-						//any live cell with fewer than two live neighbours dies
-						newWorld[y][x] = 0
-					} else if aliveNeighbours <= 3 {
-						//any live cell with two or three live neighbours is unaffected
-						newWorld[y][x] = 255
-					} else {
-						//any live cell with more than three live neighbours dies
-						newWorld[y][x] = 0
-					}
-				}
-
-				if world[y][x] == 0 {
-					//any dead cell with exactly three live neighbours becomes alive
-					if aliveNeighbours == 3 {
-						newWorld[y][x] = 255
-					}
-				}
+		//receive the result from res channel
+		for i := 0; i < p.Threads; i++ {
+			finalRes := <-res
+			for j, row := range finalRes.rowRes {
+				newWorld[finalRes.startY+j] = row
 			}
 		}
 		//updates world
