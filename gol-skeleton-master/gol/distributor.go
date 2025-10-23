@@ -2,6 +2,7 @@ package gol
 
 import (
 	"fmt"
+	"time"
 
 	"uk.ac.bris.cs/gameoflife/util"
 )
@@ -77,6 +78,35 @@ func distributor(p Params, c distributorChannels) {
 	jobs := make(chan workerJob, p.Threads)
 	res := make(chan workerRes, p.Threads)
 
+	//create time ticker and reflect alive cells each 2s
+	ticker := time.NewTicker(2 * time.Second)
+	done := make(chan bool)
+
+	go func(p Params) {
+		for {
+			select {
+			case <-ticker.C:
+				count := 0
+				//calc number of alive cells
+				for y := 0; y < p.ImageHeight; y++ {
+					for x := 0; x < p.ImageWidth; x++ {
+						if world[y][x] == 255 {
+							count++
+						}
+					}
+				}
+
+				c.events <- AliveCellsCount{
+					CompletedTurns: turn,
+					CellsCount:     count,
+				}
+
+			case <-done:
+				ticker.Stop()
+				return
+			}
+		}
+	}(p)
 	//start workers
 	for i := 0; i < p.Threads; i++ {
 		go func() {
@@ -96,15 +126,13 @@ func distributor(p Params, c distributorChannels) {
 						//judge stage
 						//0-die, 255-alive
 						if job.world[y][x] == 255 {
-							if aliveNeighbours < 2 {
+							if aliveNeighbours < 2 || aliveNeighbours > 3 {
 								//any live cell with fewer than two live neighbours dies
-								workerArea[y-startY][x] = 0
-							} else if aliveNeighbours <= 3 {
-								//any live cell with two or three live neighbours is unaffected
-								workerArea[y-startY][x] = 255
-							} else {
 								//any live cell with more than three live neighbours dies
 								workerArea[y-startY][x] = 0
+							} else {
+								//any live cell with two or three live neighbours is unaffected
+								workerArea[y-startY][x] = 255
 							}
 						}
 
@@ -112,6 +140,8 @@ func distributor(p Params, c distributorChannels) {
 							//any dead cell with exactly three live neighbours becomes alive
 							if aliveNeighbours == 3 {
 								workerArea[y-startY][x] = 255
+							} else {
+								workerArea[y-startY][x] = 0
 							}
 						}
 					}
@@ -161,6 +191,9 @@ func distributor(p Params, c distributorChannels) {
 		world = newWorld
 		turn++
 	}
+
+	//ensure time ticker stop
+	done <- true
 
 	//output the new graph
 	c.ioCommand <- ioOutput
