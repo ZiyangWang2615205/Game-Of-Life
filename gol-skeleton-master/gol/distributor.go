@@ -68,9 +68,6 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 		world[i] = make([]uint8, p.ImageWidth)
 	}
 
-	turn := 0
-	c.events <- StateChange{turn, Executing}
-
 	//make Io read the init graph,filename can be 16x16, 64x64 etc.
 	c.ioCommand <- ioInput
 	c.ioFilename <- fmt.Sprintf("%dx%d", p.ImageWidth, p.ImageHeight)
@@ -81,6 +78,26 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			world[i][j] = <-c.ioInput
 		}
 	}
+
+	//give SDL our initial graph state
+	turn := 0
+	initCells := []util.Cell{}
+	for y := 0; y < p.ImageHeight; y++ {
+		for x := 0; x < p.ImageWidth; x++ {
+			if world[y][x] == 255 {
+				initCells = append(initCells, util.Cell{
+					X: x,
+					Y: y,
+				})
+			}
+		}
+	}
+	c.events <- CellsFlipped{
+		CompletedTurns: turn,
+		Cells:          initCells,
+	}
+
+	c.events <- StateChange{turn, Executing}
 
 	//workJob type helps us to distribute job
 	type workerJob struct {
@@ -128,6 +145,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			}
 		}
 	}(p)
+
 	//start workers
 	for i := 0; i < p.Threads; i++ {
 		go func() {
@@ -242,20 +260,28 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			}
 		}
 
+		//record the number of flip cells
+		flipCells := []util.Cell{}
 		for y := 0; y < p.ImageHeight; y++ {
 			for x := 0; x < p.ImageWidth; x++ {
 				if world[y][x] != newWorld[y][x] {
-					c.events <- CellFlipped{
-						CompletedTurns: turn,
-						Cell:           util.Cell{X: x, Y: y},
-					}
+					flipCells = append(flipCells, util.Cell{
+						X: x,
+						Y: y,
+					})
 				}
 			}
 		}
+
 		//updates world
 		world = newWorld
 		turn++
 
+		//ensure send CellsFlipped event before TurnComplete
+		c.events <- CellsFlipped{
+			CompletedTurns: turn,
+			Cells:          flipCells,
+		}
 		c.events <- TurnComplete{CompletedTurns: turn}
 	}
 
