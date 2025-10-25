@@ -2,6 +2,7 @@ package gol
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"uk.ac.bris.cs/gameoflife/util"
@@ -61,6 +62,9 @@ func saveCurWorld(p Params, c distributorChannels, world [][]uint8, turn int) {
 
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
+	//init mutex to prevent data races
+	//in distributor both turn and world will be source of data races
+	var worldLock sync.RWMutex
 
 	// TODO: Create a 2D slice to store the world.
 	world := make([][]uint8, p.ImageHeight)
@@ -81,6 +85,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 	//give SDL our initial graph state
 	turn := 0
+	worldLock.RLock()
 	initCells := []util.Cell{}
 	for y := 0; y < p.ImageHeight; y++ {
 		for x := 0; x < p.ImageWidth; x++ {
@@ -92,6 +97,8 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			}
 		}
 	}
+	worldLock.RUnlock()
+
 	c.events <- CellsFlipped{
 		CompletedTurns: turn,
 		Cells:          initCells,
@@ -124,6 +131,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 		for {
 			select {
 			case <-ticker.C:
+				worldLock.RLock()
 				count := 0
 				//calc number of alive cells
 				for y := 0; y < p.ImageHeight; y++ {
@@ -133,9 +141,11 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 						}
 					}
 				}
+				curTurn := turn
+				worldLock.RUnlock()
 
 				c.events <- AliveCellsCount{
-					CompletedTurns: turn,
+					CompletedTurns: curTurn,
 					CellsCount:     count,
 				}
 
@@ -159,6 +169,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 					workerArea[index] = make([]uint8, p.ImageWidth)
 				}
 				//do the job
+				worldLock.RLock()
 				for y := startY; y < endY; y++ {
 					for x := 0; x < p.ImageWidth; x++ {
 						aliveNeighbours := calcAliveNeighbours(x, y, job.world, p)
@@ -185,6 +196,8 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 						}
 					}
 				}
+				worldLock.RUnlock()
+
 				//res channel to receive the return of each worker
 				res <- workerRes{
 					startY: startY,
@@ -206,10 +219,14 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			switch key {
 			case 's':
 				//If s is pressed, save the current state of the board as a PGM image
+				worldLock.RLock()
 				saveCurWorld(p, c, world, turn)
+				worldLock.RUnlock()
 			case 'q':
 				//If q is pressed, stop executing Gol computation, save the current state of the board as a PGM image, then terminate the program.
+				worldLock.RLock()
 				saveCurWorld(p, c, world, turn)
+				worldLock.RUnlock()
 				quitSignal = true
 				continue
 			case 'p':
@@ -235,6 +252,14 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			newWorld[i] = make([]uint8, p.ImageWidth)
 		}
 
+		//make a copy of world prevent data races
+		worldLock.RLock()
+		worldCopy := make([][]uint8, p.ImageHeight)
+		for i := range worldCopy {
+			worldCopy[i] = append([]uint8(nil), world[i]...)
+		}
+		worldLock.RUnlock()
+
 		//distribute the job to thread
 		chunk := p.ImageHeight / p.Threads
 		for i := 0; i < p.Threads; i++ {
@@ -248,7 +273,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			jobs <- workerJob{
 				startY: startY,
 				endY:   endY,
-				world:  world,
+				world:  worldCopy,
 			}
 		}
 
@@ -262,6 +287,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 		//record the number of flip cells
 		flipCells := []util.Cell{}
+		worldLock.RLock()
 		for y := 0; y < p.ImageHeight; y++ {
 			for x := 0; x < p.ImageWidth; x++ {
 				if world[y][x] != newWorld[y][x] {
@@ -272,10 +298,13 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				}
 			}
 		}
+		worldLock.RUnlock()
 
 		//updates world
+		worldLock.Lock()
 		world = newWorld
 		turn++
+		worldLock.Unlock()
 
 		//ensure send CellsFlipped event before TurnComplete
 		c.events <- CellsFlipped{
@@ -294,6 +323,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	}
 
 	// TODO: Report the final state using FinalTurnCompleteEvent.
+	worldLock.RLock()
 	aliveCells := []util.Cell{}
 	for y := 0; y < p.ImageHeight; y++ {
 		for x := 0; x < p.ImageWidth; x++ {
@@ -305,6 +335,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			}
 		}
 	}
+	worldLock.RUnlock()
 
 	c.events <- FinalTurnComplete{CompletedTurns: p.Turns, Alive: aliveCells}
 
