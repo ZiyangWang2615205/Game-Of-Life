@@ -1,0 +1,350 @@
+package gol
+
+import (
+	"fmt"
+	"sync"
+	"time"
+
+	"uk.ac.bris.cs/gameoflife/util"
+)
+
+type distributorChannels struct {
+	events     chan<- Event
+	ioCommand  chan<- ioCommand
+	ioIdle     <-chan bool
+	ioFilename chan<- string
+	ioOutput   chan<- uint8
+	ioInput    <-chan uint8
+}
+
+// calcAliveNeighbours counts the number of alive neighbours
+func calcAliveNeighbours(x, y int, world [][]uint8, p Params) int {
+	count := 0
+	offestX := [3]int{-1, 0, 1}
+	offestY := [3]int{-1, 0, 1}
+	for _, dy := range offestY {
+		for _, dx := range offestX {
+			//count except itself
+			if dy == 0 && dx == 0 {
+				continue
+			}
+			//calculate neighbour coordinate
+			nY := (y + dy + p.ImageHeight) % p.ImageHeight
+			nX := (x + dx + p.ImageWidth) % p.ImageWidth
+			if world[nY][nX] == 255 {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// saveCurWorld is used to save current world
+func saveCurWorld(p Params, c distributorChannels, world [][]uint8, turn int) {
+	filename := fmt.Sprintf("%dx%dx%d", p.ImageWidth, p.ImageHeight, turn)
+	//output the new graph
+	c.ioCommand <- ioOutput
+	c.ioFilename <- fmt.Sprintf(filename)
+	for y := 0; y < p.ImageHeight; y++ {
+		for x := 0; x < p.ImageWidth; x++ {
+			c.ioOutput <- world[y][x]
+		}
+	}
+
+	c.ioCommand <- ioCheckIdle
+	<-c.ioIdle
+
+	c.events <- ImageOutputComplete{
+		CompletedTurns: turn,
+		Filename:       filename,
+	}
+}
+
+// distributor divides the work between workers and interacts with other goroutines.
+func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
+	//init mutex to prevent data races
+	//in distributor both turn and world will be source of data races
+	var worldLock sync.RWMutex
+
+	// TODO: Create a 2D slice to store the world.
+	world := make([][]uint8, p.ImageHeight)
+	for i := range world {
+		world[i] = make([]uint8, p.ImageWidth)
+	}
+
+	//make Io read the init graph,filename can be 16x16, 64x64 etc.
+	c.ioCommand <- ioInput
+	c.ioFilename <- fmt.Sprintf("%dx%d", p.ImageWidth, p.ImageHeight)
+
+	//receive pixel from Io
+	for i := 0; i < p.ImageHeight; i++ {
+		for j := 0; j < p.ImageWidth; j++ {
+			world[i][j] = <-c.ioInput
+		}
+	}
+
+	//give SDL our initial graph state
+	turn := 0
+	worldLock.RLock()
+	initCells := []util.Cell{}
+	for y := 0; y < p.ImageHeight; y++ {
+		for x := 0; x < p.ImageWidth; x++ {
+			if world[y][x] == 255 {
+				initCells = append(initCells, util.Cell{
+					X: x,
+					Y: y,
+				})
+			}
+		}
+	}
+	worldLock.RUnlock()
+
+	c.events <- CellsFlipped{
+		CompletedTurns: turn,
+		Cells:          initCells,
+	}
+
+	c.events <- StateChange{turn, Executing}
+
+	//workJob type helps us to distribute job
+	type workerJob struct {
+		startY int
+		endY   int
+		world  [][]uint8
+	}
+
+	//workerRes type helps to return the res to distributor
+	type workerRes struct {
+		startY int
+		rowRes [][]uint8
+	}
+
+	//create channel
+	jobs := make(chan workerJob, p.Threads)
+	res := make(chan workerRes, p.Threads)
+
+	//create time ticker and reflect alive cells each 2s
+	ticker := time.NewTicker(2 * time.Second)
+	done := make(chan bool)
+
+	go func(p Params) {
+		for {
+			select {
+			case <-ticker.C:
+				worldLock.RLock()
+				count := 0
+				//calc number of alive cells
+				for y := 0; y < p.ImageHeight; y++ {
+					for x := 0; x < p.ImageWidth; x++ {
+						if world[y][x] == 255 {
+							count++
+						}
+					}
+				}
+				curTurn := turn
+				worldLock.RUnlock()
+
+				c.events <- AliveCellsCount{
+					CompletedTurns: curTurn,
+					CellsCount:     count,
+				}
+
+			case <-done:
+				ticker.Stop()
+				return
+			}
+		}
+	}(p)
+
+	//start workers
+	for i := 0; i < p.Threads; i++ {
+		go func() {
+			//receive the job from jobs channel
+			for job := range jobs {
+				startY := job.startY
+				endY := job.endY
+				//tell worker which area belongs to him
+				workerArea := make([][]uint8, endY-startY)
+				for index := range workerArea {
+					workerArea[index] = make([]uint8, p.ImageWidth)
+				}
+				//do the job
+				worldLock.RLock()
+				for y := startY; y < endY; y++ {
+					for x := 0; x < p.ImageWidth; x++ {
+						aliveNeighbours := calcAliveNeighbours(x, y, job.world, p)
+						//judge stage
+						//0-die, 255-alive
+						if job.world[y][x] == 255 {
+							if aliveNeighbours < 2 || aliveNeighbours > 3 {
+								//any live cell with fewer than two live neighbours dies
+								//any live cell with more than three live neighbours dies
+								workerArea[y-startY][x] = 0
+							} else {
+								//any live cell with two or three live neighbours is unaffected
+								workerArea[y-startY][x] = 255
+							}
+						}
+
+						if job.world[y][x] == 0 {
+							//any dead cell with exactly three live neighbours becomes alive
+							if aliveNeighbours == 3 {
+								workerArea[y-startY][x] = 255
+							} else {
+								workerArea[y-startY][x] = 0
+							}
+						}
+					}
+				}
+				worldLock.RUnlock()
+
+				//res channel to receive the return of each worker
+				res <- workerRes{
+					startY: startY,
+					rowRes: workerArea,
+				}
+			}
+
+		}()
+	}
+
+	// TODO: Execute all turns of the Game of Life.
+	quitSignal := false
+	state := Executing
+	for turn < p.Turns && !quitSignal {
+		//deal with keyboard pressing stuff
+		select {
+		//read the keypress
+		case key := <-keyPresses:
+			switch key {
+			case 's':
+				//If s is pressed, save the current state of the board as a PGM image
+				worldLock.RLock()
+				saveCurWorld(p, c, world, turn)
+				worldLock.RUnlock()
+			case 'q':
+				//If q is pressed, stop executing Gol computation, save the current state of the board as a PGM image, then terminate the program.
+				worldLock.RLock()
+				saveCurWorld(p, c, world, turn)
+				worldLock.RUnlock()
+				quitSignal = true
+				continue
+			case 'p':
+				//If p is pressed, pause the processing and send a StateChange event.
+				//When p is pressed again, resume the processing and send a StateChange event.
+				if state == Executing {
+					state = Paused
+				} else {
+					state = Executing
+				}
+				c.events <- StateChange{turn, state}
+			}
+		default:
+		}
+		if state == Paused {
+			time.Sleep(100 * time.Millisecond)
+			c.events <- TurnComplete{CompletedTurns: turn}
+			continue
+		}
+		//record next state
+		newWorld := make([][]uint8, p.ImageHeight)
+		for i := range newWorld {
+			newWorld[i] = make([]uint8, p.ImageWidth)
+		}
+
+		//make a copy of world prevent data races
+		worldLock.RLock()
+		worldCopy := make([][]uint8, p.ImageHeight)
+		for i := range worldCopy {
+			worldCopy[i] = append([]uint8(nil), world[i]...)
+		}
+		worldLock.RUnlock()
+
+		//distribute the job to thread
+		chunk := p.ImageHeight / p.Threads
+		for i := 0; i < p.Threads; i++ {
+			//init start and end
+			startY := i * chunk
+			endY := startY + chunk
+			//ensure if the last part could not be divided equally
+			if i == p.Threads-1 {
+				endY = p.ImageHeight
+			}
+			jobs <- workerJob{
+				startY: startY,
+				endY:   endY,
+				world:  worldCopy,
+			}
+		}
+
+		//receive the result from res channel
+		for i := 0; i < p.Threads; i++ {
+			finalRes := <-res
+			for j, row := range finalRes.rowRes {
+				newWorld[finalRes.startY+j] = row
+			}
+		}
+
+		//record the number of flip cells
+		flipCells := []util.Cell{}
+		worldLock.RLock()
+		for y := 0; y < p.ImageHeight; y++ {
+			for x := 0; x < p.ImageWidth; x++ {
+				if world[y][x] != newWorld[y][x] {
+					flipCells = append(flipCells, util.Cell{
+						X: x,
+						Y: y,
+					})
+				}
+			}
+		}
+		worldLock.RUnlock()
+
+		//updates world
+		worldLock.Lock()
+		world = newWorld
+		turn++
+		worldLock.Unlock()
+
+		//ensure send CellsFlipped event before TurnComplete
+		c.events <- CellsFlipped{
+			CompletedTurns: turn,
+			Cells:          flipCells,
+		}
+		c.events <- TurnComplete{CompletedTurns: turn}
+	}
+
+	//ensure time ticker stop
+	done <- true
+
+	//output the graph if program ending
+	if !quitSignal {
+		saveCurWorld(p, c, world, turn)
+	}
+
+	// TODO: Report the final state using FinalTurnCompleteEvent.
+	worldLock.RLock()
+	aliveCells := []util.Cell{}
+	for y := 0; y < p.ImageHeight; y++ {
+		for x := 0; x < p.ImageWidth; x++ {
+			if world[y][x] == 255 {
+				aliveCells = append(aliveCells, util.Cell{
+					X: x,
+					Y: y,
+				})
+			}
+		}
+	}
+	worldLock.RUnlock()
+
+	c.events <- FinalTurnComplete{CompletedTurns: p.Turns, Alive: aliveCells}
+
+	// Make sure that the Io has finished any output before exiting.
+	c.ioCommand <- ioCheckIdle
+	<-c.ioIdle
+
+	c.events <- StateChange{turn, Quitting}
+
+	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
+	close(c.events)
+}
