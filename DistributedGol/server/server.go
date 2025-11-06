@@ -4,9 +4,17 @@ import (
 	"flag"
 	"net"
 	"net/rpc"
+	"sync"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
 )
+
+// currentWorld used for check alive cells nums
+var currentWorld [][]uint8
+
+// currentTurn used for check current turn
+var currentTurn int
+var mu sync.Mutex
 
 // calcAliveNeighbours counts the number of alive neighbours
 func calcAliveNeighbours(x, y int, world [][]uint8, height, width int) int {
@@ -31,6 +39,23 @@ func calcAliveNeighbours(x, y int, world [][]uint8, height, width int) int {
 }
 
 type Engine struct{}
+
+func (e *Engine) AliveCellsCount(req stubs.Request, res *stubs.Response) error {
+	mu.Lock()
+	defer mu.Unlock()
+	count := 0
+	for row := 0; row < len(currentWorld); row++ {
+		for col := 0; col < len(currentWorld[0]); col++ {
+			if currentWorld[row][col] == 255 {
+				count++
+			}
+		}
+	}
+
+	res.AliveCells = count
+	res.Turn = currentTurn
+	return nil
+}
 
 func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 	// gain the param
@@ -75,6 +100,11 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 		//updates world
 		world = newWorld
 		turn++
+
+		mu.Lock()
+		currentTurn = turn
+		currentWorld = world
+		mu.Unlock()
 	}
 	//send result to response pointer
 	res.NewWorld = world
