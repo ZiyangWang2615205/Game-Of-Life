@@ -2,9 +2,10 @@ package gol
 
 import (
 	"fmt"
-	"sync"
-	"time"
+	"log"
+	"net/rpc"
 
+	"uk.ac.bris.cs/gameoflife/stubs"
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -62,9 +63,13 @@ func saveCurWorld(p Params, c distributorChannels, world [][]uint8, turn int) {
 
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
-	//init mutex to prevent data races
-	//in distributor both turn and world will be source of data races
-	var worldLock sync.RWMutex
+	//connect with AWS server
+	server := "3.88.113.240:8030"
+	client, err := rpc.Dial("tcp", server)
+	if err != nil {
+		log.Fatal("Dialing: ", err)
+	}
+	defer client.Close()
 
 	// TODO: Create a 2D slice to store the world.
 	world := make([][]uint8, p.ImageHeight)
@@ -83,247 +88,38 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 		}
 	}
 
-	//give SDL our initial graph state
 	turn := 0
-	worldLock.RLock()
-	initCells := []util.Cell{}
-	for y := 0; y < p.ImageHeight; y++ {
-		for x := 0; x < p.ImageWidth; x++ {
-			if world[y][x] == 255 {
-				initCells = append(initCells, util.Cell{
-					X: x,
-					Y: y,
-				})
-			}
-		}
-	}
-	worldLock.RUnlock()
-
-	c.events <- CellsFlipped{
-		CompletedTurns: turn,
-		Cells:          initCells,
-	}
-
 	c.events <- StateChange{turn, Executing}
 
-	//workJob type helps us to distribute job
-	type workerJob struct {
-		startY int
-		endY   int
-		world  [][]uint8
+	//create RPC
+	req := stubs.Request{
+		World:       world,
+		Turn:        p.Turns,
+		ImageHeight: p.ImageHeight,
+		ImageWidth:  p.ImageWidth,
 	}
 
-	//workerRes type helps to return the res to distributor
-	type workerRes struct {
-		startY int
-		rowRes [][]uint8
+	var res *stubs.Response = &stubs.Response{}
+
+	//RPC ExecuteGol
+	err = client.Call(stubs.EngineStart, req, res)
+	if err != nil {
+		log.Fatal("fail to use RPC: ", err)
 	}
 
-	//create channel
-	jobs := make(chan workerJob, p.Threads)
-	res := make(chan workerRes, p.Threads)
+	//receive result and updates world
+	world = res.NewWorld
 
-	//create time ticker and reflect alive cells each 2s
-	ticker := time.NewTicker(2 * time.Second)
-	done := make(chan bool)
-
-	go func(p Params) {
-		for {
-			select {
-			case <-ticker.C:
-				worldLock.RLock()
-				count := 0
-				//calc number of alive cells
-				for y := 0; y < p.ImageHeight; y++ {
-					for x := 0; x < p.ImageWidth; x++ {
-						if world[y][x] == 255 {
-							count++
-						}
-					}
-				}
-				curTurn := turn
-				worldLock.RUnlock()
-
-				c.events <- AliveCellsCount{
-					CompletedTurns: curTurn,
-					CellsCount:     count,
-				}
-
-			case <-done:
-				ticker.Stop()
-				return
-			}
+	//output the new graph
+	c.ioCommand <- ioOutput
+	c.ioFilename <- fmt.Sprintf("%dx%d", p.ImageWidth, p.ImageHeight)
+	for y := 0; y < p.ImageHeight; y++ {
+		for x := 0; x < p.ImageWidth; x++ {
+			c.ioOutput <- world[y][x]
 		}
-	}(p)
-
-	//start workers
-	for i := 0; i < p.Threads; i++ {
-		go func() {
-			//receive the job from jobs channel
-			for job := range jobs {
-				startY := job.startY
-				endY := job.endY
-				//tell worker which area belongs to him
-				workerArea := make([][]uint8, endY-startY)
-				for index := range workerArea {
-					workerArea[index] = make([]uint8, p.ImageWidth)
-				}
-				//do the job
-				worldLock.RLock()
-				for y := startY; y < endY; y++ {
-					for x := 0; x < p.ImageWidth; x++ {
-						aliveNeighbours := calcAliveNeighbours(x, y, job.world, p)
-						//judge stage
-						//0-die, 255-alive
-						if job.world[y][x] == 255 {
-							if aliveNeighbours < 2 || aliveNeighbours > 3 {
-								//any live cell with fewer than two live neighbours dies
-								//any live cell with more than three live neighbours dies
-								workerArea[y-startY][x] = 0
-							} else {
-								//any live cell with two or three live neighbours is unaffected
-								workerArea[y-startY][x] = 255
-							}
-						}
-
-						if job.world[y][x] == 0 {
-							//any dead cell with exactly three live neighbours becomes alive
-							if aliveNeighbours == 3 {
-								workerArea[y-startY][x] = 255
-							} else {
-								workerArea[y-startY][x] = 0
-							}
-						}
-					}
-				}
-				worldLock.RUnlock()
-
-				//res channel to receive the return of each worker
-				res <- workerRes{
-					startY: startY,
-					rowRes: workerArea,
-				}
-			}
-
-		}()
-	}
-
-	// TODO: Execute all turns of the Game of Life.
-	quitSignal := false
-	state := Executing
-	for turn < p.Turns && !quitSignal {
-		//deal with keyboard pressing stuff
-		select {
-		//read the keypress
-		case key := <-keyPresses:
-			switch key {
-			case 's':
-				//If s is pressed, save the current state of the board as a PGM image
-				worldLock.RLock()
-				saveCurWorld(p, c, world, turn)
-				worldLock.RUnlock()
-			case 'q':
-				//If q is pressed, stop executing Gol computation, save the current state of the board as a PGM image, then terminate the program.
-				worldLock.RLock()
-				saveCurWorld(p, c, world, turn)
-				worldLock.RUnlock()
-				quitSignal = true
-				continue
-			case 'p':
-				//If p is pressed, pause the processing and send a StateChange event.
-				//When p is pressed again, resume the processing and send a StateChange event.
-				if state == Executing {
-					state = Paused
-				} else {
-					state = Executing
-				}
-				c.events <- StateChange{turn, state}
-			}
-		default:
-		}
-		if state == Paused {
-			time.Sleep(100 * time.Millisecond)
-			c.events <- TurnComplete{CompletedTurns: turn}
-			continue
-		}
-		//record next state
-		newWorld := make([][]uint8, p.ImageHeight)
-		for i := range newWorld {
-			newWorld[i] = make([]uint8, p.ImageWidth)
-		}
-
-		//make a copy of world prevent data races
-		worldLock.RLock()
-		worldCopy := make([][]uint8, p.ImageHeight)
-		for i := range worldCopy {
-			worldCopy[i] = append([]uint8(nil), world[i]...)
-		}
-		worldLock.RUnlock()
-
-		//distribute the job to thread
-		chunk := p.ImageHeight / p.Threads
-		for i := 0; i < p.Threads; i++ {
-			//init start and end
-			startY := i * chunk
-			endY := startY + chunk
-			//ensure if the last part could not be divided equally
-			if i == p.Threads-1 {
-				endY = p.ImageHeight
-			}
-			jobs <- workerJob{
-				startY: startY,
-				endY:   endY,
-				world:  worldCopy,
-			}
-		}
-
-		//receive the result from res channel
-		for i := 0; i < p.Threads; i++ {
-			finalRes := <-res
-			for j, row := range finalRes.rowRes {
-				newWorld[finalRes.startY+j] = row
-			}
-		}
-
-		//record the number of flip cells
-		flipCells := []util.Cell{}
-		worldLock.RLock()
-		for y := 0; y < p.ImageHeight; y++ {
-			for x := 0; x < p.ImageWidth; x++ {
-				if world[y][x] != newWorld[y][x] {
-					flipCells = append(flipCells, util.Cell{
-						X: x,
-						Y: y,
-					})
-				}
-			}
-		}
-		worldLock.RUnlock()
-
-		//updates world
-		worldLock.Lock()
-		world = newWorld
-		turn++
-		worldLock.Unlock()
-
-		//ensure send CellsFlipped event before TurnComplete
-		c.events <- CellsFlipped{
-			CompletedTurns: turn,
-			Cells:          flipCells,
-		}
-		c.events <- TurnComplete{CompletedTurns: turn}
-	}
-
-	//ensure time ticker stop
-	done <- true
-
-	//output the graph if program ending
-	if !quitSignal {
-		saveCurWorld(p, c, world, turn)
 	}
 
 	// TODO: Report the final state using FinalTurnCompleteEvent.
-	worldLock.RLock()
 	aliveCells := []util.Cell{}
 	for y := 0; y < p.ImageHeight; y++ {
 		for x := 0; x < p.ImageWidth; x++ {
@@ -335,7 +131,6 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			}
 		}
 	}
-	worldLock.RUnlock()
 
 	c.events <- FinalTurnComplete{CompletedTurns: p.Turns, Alive: aliveCells}
 
