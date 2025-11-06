@@ -64,48 +64,50 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 	height := req.ImageHeight
 	width := req.ImageWidth
 
-	turn := 0
-	for turn < turns {
-		//create new world to store next state
-		newWorld := make([][]uint8, height)
-		for i := range newWorld {
-			newWorld[i] = make([]uint8, width)
-		}
+	go func() {
+		turn := 0
+		for turn < turns {
+			//create new world to store next state
+			newWorld := make([][]uint8, height)
+			for i := range newWorld {
+				newWorld[i] = make([]uint8, width)
+			}
 
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
-				aliveNeighbours := calcAliveNeighbours(x, y, world, height, width)
-				//live cell
-				if world[y][x] == 255 {
-					//any live cell with fewer than two/ more than three live neighbours dies
-					if aliveNeighbours < 2 || aliveNeighbours > 3 {
-						newWorld[y][x] = 0
-					} else {
-						//any live cell with more than three live neighbours dies
-						newWorld[y][x] = 255
+			for y := 0; y < height; y++ {
+				for x := 0; x < width; x++ {
+					aliveNeighbours := calcAliveNeighbours(x, y, world, height, width)
+					//live cell
+					if world[y][x] == 255 {
+						//any live cell with fewer than two/ more than three live neighbours dies
+						if aliveNeighbours < 2 || aliveNeighbours > 3 {
+							newWorld[y][x] = 0
+						} else {
+							//any live cell with more than three live neighbours dies
+							newWorld[y][x] = 255
 
+						}
 					}
-				}
 
-				//die cell
-				if world[y][x] == 0 {
-					if aliveNeighbours == 3 {
-						//any dead cell with exactly three live neighbours becomes alive
-						newWorld[y][x] = 255
+					//die cell
+					if world[y][x] == 0 {
+						if aliveNeighbours == 3 {
+							//any dead cell with exactly three live neighbours becomes alive
+							newWorld[y][x] = 255
+						}
 					}
 				}
 			}
+
+			//updates world
+			world = newWorld
+			turn++
+
+			mu.Lock()
+			currentTurn = turn
+			currentWorld = world
+			mu.Unlock()
 		}
-
-		//updates world
-		world = newWorld
-		turn++
-
-		currentTurn = turn
-		mu.Lock()
-		currentWorld = world
-		mu.Unlock()
-	}
+	}()
 	//send result to response pointer
 	res.NewWorld = world
 	return nil
