@@ -105,40 +105,148 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 		}
 	}()
 
-	//RPC ExecuteGol
-	err = client.Call(stubs.EngineStart, req, res)
-	if err != nil {
-		log.Fatal("fail to use ExecuteGol: ", err)
-	}
+	//------------------------- 신규: ExecuteGol을 비동기로 실행하여 키 루프가 즉시 시작되도록 함 -------------------------
+	// 기존(블로킹) 호출
+	// err = client.Call(stubs.EngineStart, req, res)
+	// if err != nil {
+	// 	log.Fatal("fail to use ExecuteGol: ", err)
+	// }
+	rpcDone := make(chan error, 1)
+	go func() {
+		rpcDone <- client.Call(stubs.EngineStart, req, res)
+	}()
+	//------------------------- 신규 끝 ------------------------------------------------------------
 
-	//receive result and updates world & turn
-	world = res.NewWorld
-	//stop the time ticker
-	done <- true
-
-	saveCurWorld(p, c, world, p.Turns)
-
-	// TODO: Report the final state using FinalTurnCompleteEvent.
-	aliveCells := []util.Cell{}
-	for y := 0; y < p.ImageHeight; y++ {
-		for x := 0; x < p.ImageWidth; x++ {
-			if world[y][x] == 255 {
-				aliveCells = append(aliveCells, util.Cell{
-					X: x,
-					Y: y,
-				})
+	for true { // just for loop
+		select {
+		//------------------------- 신규: 시뮬레이션 완료/에러 감시 -------------------------
+		case callErr := <-rpcDone:
+			if callErr != nil {
+				log.Fatal("fail to use ExecuteGol: ", callErr)
 			}
+			//receive result and updates world & turn
+			world = res.NewWorld
+			//stop the time ticker
+			done <- true
+
+			saveCurWorld(p, c, world, p.Turns)
+
+			// TODO: Report the final state using FinalTurnCompleteEvent.
+			aliveCells := []util.Cell{}
+			for y := 0; y < p.ImageHeight; y++ {
+				for x := 0; x < p.ImageWidth; x++ {
+					if world[y][x] == 255 {
+						aliveCells = append(aliveCells, util.Cell{
+							X: x,
+							Y: y,
+						})
+					}
+				}
+			}
+
+			c.events <- FinalTurnComplete{CompletedTurns: p.Turns, Alive: aliveCells}
+
+			// Make sure that the Io has finished any output before exiting.
+			c.ioCommand <- ioCheckIdle
+			<-c.ioIdle
+
+			c.events <- StateChange{turn, Quitting}
+
+			// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
+			close(c.events)
+			return
+		//------------------------- 신규 끝 ------------------------------------------------
+
+		case key := <-keyPresses:
+			switch key {
+			case 's':
+				//If s is pressed, the controller should generate a PGM file with the current state of the board.
+				var saveRes stubs.Response
+				err := client.Call(stubs.EngineSave, stubs.Request{}, &saveRes)
+				if err != nil {
+					log.Fatal("fail to use SaveCurrent: ", err)
+				}
+				saveCurWorld(p, c, saveRes.NewWorld, saveRes.Turn)
+
+			case 'q':
+				//If q is pressed, close the controller client program without causing an error on the Gol server.
+				done <- true
+				// Make sure that the Io has finished any output before exiting.
+				c.ioCommand <- ioCheckIdle
+				<-c.ioIdle
+
+				c.events <- StateChange{turn, Quitting}
+
+				// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
+				close(c.events)
+				return
+
+			case 'k':
+				//If k is pressed, all components of the distributed system are shut down cleanly, and the system outputs a PGM image of the latest state.
+				var overRes stubs.Response
+				_ = client.Call(stubs.EngineOver, stubs.Request{}, &overRes)
+				saveCurWorld(p, c, overRes.NewWorld, overRes.Turn)
+
+				done <- true
+				c.ioCommand <- ioCheckIdle
+				<-c.ioIdle
+
+				c.events <- StateChange{overRes.Turn, Quitting}
+				close(c.events)
+				return
+
+			case 'p':
+				//If p is pressed, pause the processing on the AWS node and have the controller print the current turn that is being processed.
+				//If p is pressed again resume the processing and have the controller print Continuing.
+				var pauseRes stubs.Response
+				//------------------------- 신규: 서버에 토글 RPC 호출 -------------------------
+				if err := client.Call(stubs.EnginePaused, stubs.Request{}, &pauseRes); err != nil {
+					log.Fatal("fail to toggle pause: ", err)
+				}
+				//------------------------- 신규 끝 -------------------------
+				if pauseRes.IsPaused {
+					fmt.Printf("Turn %d is being processed\n", pauseRes.Turn)
+					c.events <- StateChange{pauseRes.Turn, Paused}
+				} else {
+					fmt.Println("Continuing")
+					c.events <- StateChange{pauseRes.Turn, Executing}
+				}
+			default:
+				time.Sleep(100 * time.Millisecond)
+			}
+
 		}
 	}
 
-	c.events <- FinalTurnComplete{CompletedTurns: p.Turns, Alive: aliveCells}
-
-	// Make sure that the Io has finished any output before exiting.
-	c.ioCommand <- ioCheckIdle
-	<-c.ioIdle
-
-	c.events <- StateChange{turn, Quitting}
-
-	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
-	close(c.events)
+	// 아래 블록은 이제 rpcDone 분기로 이동됨.
+	//receive result and updates world & turn
+	// world = res.NewWorld
+	// //stop the time ticker
+	// done <- true
+	//
+	// saveCurWorld(p, c, world, p.Turns)
+	//
+	// // TODO: Report the final state using FinalTurnCompleteEvent.
+	// aliveCells := []util.Cell{}
+	// for y := 0; y < p.ImageHeight; y++ {
+	// 	for x := 0; x < p.ImageWidth; x++ {
+	// 		if world[y][x] == 255 {
+	// 			aliveCells = append(aliveCells, util.Cell{
+	// 				X: x,
+	// 				Y: y,
+	// 			})
+	// 		}
+	// 	}
+	// }
+	//
+	// c.events <- FinalTurnComplete{CompletedTurns: p.Turns, Alive: aliveCells}
+	//
+	// // Make sure that the Io has finished any output before exiting.
+	// c.ioCommand <- ioCheckIdle
+	// <-c.ioIdle
+	//
+	// c.events <- StateChange{turn, Quitting}
+	//
+	// // Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
+	// close(c.events)
 }
