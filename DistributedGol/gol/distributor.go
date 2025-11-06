@@ -111,18 +111,12 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 		log.Fatal("fail to use ExecuteGol: ", err)
 	}
 
-	//receive result and updates world
+	//receive result and updates world & turn
 	world = res.NewWorld
 	//stop the time ticker
 	done <- true
-	//output the new graph
-	c.ioCommand <- ioOutput
-	c.ioFilename <- fmt.Sprintf("%dx%d", p.ImageWidth, p.ImageHeight)
-	for y := 0; y < p.ImageHeight; y++ {
-		for x := 0; x < p.ImageWidth; x++ {
-			c.ioOutput <- world[y][x]
-		}
-	}
+
+	saveCurWorld(p, c, world, p.Turns)
 
 	// TODO: Report the final state using FinalTurnCompleteEvent.
 	aliveCells := []util.Cell{}
