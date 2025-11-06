@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/rpc"
+	"time"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
 	"uk.ac.bris.cs/gameoflife/util"
@@ -16,28 +17,6 @@ type distributorChannels struct {
 	ioFilename chan<- string
 	ioOutput   chan<- uint8
 	ioInput    <-chan uint8
-}
-
-// calcAliveNeighbours counts the number of alive neighbours
-func calcAliveNeighbours(x, y int, world [][]uint8, p Params) int {
-	count := 0
-	offestX := [3]int{-1, 0, 1}
-	offestY := [3]int{-1, 0, 1}
-	for _, dy := range offestY {
-		for _, dx := range offestX {
-			//count except itself
-			if dy == 0 && dx == 0 {
-				continue
-			}
-			//calculate neighbour coordinate
-			nY := (y + dy + p.ImageHeight) % p.ImageHeight
-			nX := (x + dx + p.ImageWidth) % p.ImageWidth
-			if world[nY][nX] == 255 {
-				count++
-			}
-		}
-	}
-	return count
 }
 
 // saveCurWorld is used to save current world
@@ -64,7 +43,7 @@ func saveCurWorld(p Params, c distributorChannels, world [][]uint8, turn int) {
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//connect with AWS server
-	server := "3.88.113.240:8030"
+	server := "98.93.248.212:8030"
 	client, err := rpc.Dial("tcp", server)
 	if err != nil {
 		log.Fatal("Dialing: ", err)
@@ -104,12 +83,38 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//RPC ExecuteGol
 	err = client.Call(stubs.EngineStart, req, res)
 	if err != nil {
-		log.Fatal("fail to use RPC: ", err)
+		log.Fatal("fail to use ExecuteGol: ", err)
 	}
+
+	//RPC AliveCellsCount
+	ticker := time.NewTicker(2 * time.Second)
+	done := make(chan bool)
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				var aliveRes stubs.Response
+				err = client.Call(stubs.EngineCount, stubs.Request{}, &aliveRes)
+				if err != nil {
+					log.Fatal("fail to use AliveCellsCount: ", err)
+				}
+				//send the AliveCellsCount event
+				c.events <- AliveCellsCount{
+					CompletedTurns: aliveRes.Turn,
+					CellsCount:     aliveRes.AliveCells,
+				}
+
+			case <-done:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
 
 	//receive result and updates world
 	world = res.NewWorld
-
+	//stop the time ticker
+	done <- true
 	//output the new graph
 	c.ioCommand <- ioOutput
 	c.ioFilename <- fmt.Sprintf("%dx%d", p.ImageWidth, p.ImageHeight)

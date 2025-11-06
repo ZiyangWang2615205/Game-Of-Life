@@ -1,6 +1,7 @@
 package stubs
 
 var EngineStart = "Engine.ExecuteGol"
+var EngineCount = "Engine.AliveCellsCount"
 
 type Request struct {
 	World       [][]uint8
@@ -10,5 +11,7 @@ type Request struct {
 }
 
 type Response struct {
-	NewWorld [][]uint8
+	NewWorld   [][]uint8
+	AliveCells int
+	Turn       int
 }
