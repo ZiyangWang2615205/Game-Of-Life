@@ -80,12 +80,6 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 	var res *stubs.Response = &stubs.Response{}
 
-	//RPC ExecuteGol
-	err = client.Call(stubs.EngineStart, req, res)
-	if err != nil {
-		log.Fatal("fail to use ExecuteGol: ", err)
-	}
-
 	//RPC AliveCellsCount
 	ticker := time.NewTicker(2 * time.Second)
 	done := make(chan bool)
@@ -110,6 +104,12 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			}
 		}
 	}()
+
+	//RPC ExecuteGol
+	err = client.Call(stubs.EngineStart, req, res)
+	if err != nil {
+		log.Fatal("fail to use ExecuteGol: ", err)
+	}
 
 	//receive result and updates world
 	world = res.NewWorld
