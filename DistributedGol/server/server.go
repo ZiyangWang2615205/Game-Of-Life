@@ -137,7 +137,7 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 	return nil
 }
 
-func (e *Engine) SaveCurrent(req stubs.Request, res stubs.Response) error {
+func (e *Engine) SaveCurrent(req stubs.Request, res *stubs.Response) error {
 	mu.Lock()
 	res.NewWorld = currentWorld
 	res.Turn = currentTurn
@@ -145,7 +145,7 @@ func (e *Engine) SaveCurrent(req stubs.Request, res stubs.Response) error {
 	return nil
 }
 
-func (e *Engine) ShutDown(req stubs.Request, res stubs.Response) error {
+func (e *Engine) ShutDown(req stubs.Request, res *stubs.Response) error {
 	mu.Lock()
 	run = false
 	res.NewWorld = currentWorld
@@ -154,9 +154,9 @@ func (e *Engine) ShutDown(req stubs.Request, res stubs.Response) error {
 	return nil
 }
 
-func (e *Engine) Paused(req stubs.Request, res stubs.Response) error {
+func (e *Engine) Paused(req stubs.Request, res *stubs.Response) error {
 	mu.Lock()
-	res.IsPaused = true
+	paused = true
 	res.Turn = currentTurn
 	mu.Unlock()
 	return nil
@@ -164,7 +164,7 @@ func (e *Engine) Paused(req stubs.Request, res stubs.Response) error {
 
 func (e *Engine) Resumed(req stubs.Request, res stubs.Response) error {
 	mu.Lock()
-	res.IsPaused = false
+	paused = false
 	mu.Unlock()
 	return nil
 }

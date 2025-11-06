@@ -43,7 +43,7 @@ func saveCurWorld(p Params, c distributorChannels, world [][]uint8, turn int) {
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//connect with AWS server
-	server := "98.93.248.212:8030"
+	server := "54.144.244.176:8030"
 	client, err := rpc.Dial("tcp", server)
 	if err != nil {
 		log.Fatal("Dialing: ", err)
