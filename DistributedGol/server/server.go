@@ -121,6 +121,7 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 			}
 
 			//updates world
+			world = newWorld
 			currentWorld = newWorld
 			currentTurn = t + 1
 			mu.Unlock()
@@ -139,33 +140,33 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 
 func (e *Engine) SaveCurrent(req stubs.Request, res *stubs.Response) error {
 	mu.Lock()
+	defer mu.Unlock()
 	res.NewWorld = currentWorld
 	res.Turn = currentTurn
-	mu.Unlock()
 	return nil
 }
 
 func (e *Engine) ShutDown(req stubs.Request, res *stubs.Response) error {
 	mu.Lock()
+	defer mu.Unlock()
 	run = false
 	res.NewWorld = currentWorld
 	res.Turn = currentTurn
-	mu.Unlock()
 	return nil
 }
 
 func (e *Engine) Paused(req stubs.Request, res *stubs.Response) error {
 	mu.Lock()
+	defer mu.Unlock()
 	paused = true
 	res.Turn = currentTurn
-	mu.Unlock()
 	return nil
 }
 
 func (e *Engine) Resumed(req stubs.Request, res stubs.Response) error {
 	mu.Lock()
+	defer mu.Unlock()
 	paused = false
-	mu.Unlock()
 	return nil
 }
 
