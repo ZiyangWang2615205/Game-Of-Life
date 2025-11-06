@@ -70,15 +70,18 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	turn := 0
 	c.events <- StateChange{turn, Executing}
 
-	//create RPC
-	req := stubs.Request{
-		World:       world,
-		Turn:        p.Turns,
-		ImageHeight: p.ImageHeight,
-		ImageWidth:  p.ImageWidth,
-	}
-
-	var res *stubs.Response = &stubs.Response{}
+	//RPC ExecuteGol
+	exe := make(chan struct{})
+	go func() {
+		var executeRes stubs.Response
+		_ = client.Call(stubs.EngineStart, stubs.Request{
+			World:       world,
+			Turn:        p.Turns,
+			ImageHeight: p.ImageHeight,
+			ImageWidth:  p.ImageWidth,
+		}, &executeRes)
+		close(exe)
+	}()
 
 	//RPC AliveCellsCount
 	ticker := time.NewTicker(2 * time.Second)
@@ -105,12 +108,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 		}
 	}()
 
-	//RPC ExecuteGol
-	err = client.Call(stubs.EngineStart, req, res)
-	if err != nil {
-		log.Fatal("fail to use ExecuteGol: ", err)
-	}
-
+	pause := false
 	for {
 		select {
 		case key := <-keyPresses:
@@ -152,48 +150,47 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			case 'p':
 				//If p is pressed, pause the processing on the AWS node and have the controller print the current turn that is being processed.
 				var pauseRes stubs.Response
-				if pauseRes.IsPaused {
+				if !pause {
+					client.Call(stubs.EnginePaused, stubs.Request{}, &pauseRes)
 					fmt.Printf("Turn %d is being processed\n", pauseRes.Turn)
 					c.events <- StateChange{pauseRes.Turn, Paused}
+					pause = true
 				} else {
 					//If p is pressed again resume the processing and have the controller print Continuing.
+					client.Call(stubs.EngineResumed, stubs.Request{}, &stubs.Response{})
 					fmt.Println("Continuing")
 					c.events <- StateChange{pauseRes.Turn, Executing}
 				}
-			default:
-				time.Sleep(100 * time.Millisecond)
+			}
+		case <-exe:
+			var res stubs.Response
+			client.Call(stubs.EngineSave, stubs.Request{}, &res)
+			//stop the time ticker
+			done <- true
+			saveCurWorld(p, c, res.NewWorld, res.Turn)
+			// TODO: Report the final state using FinalTurnCompleteEvent.
+			aliveCells := []util.Cell{}
+			for y := 0; y < p.ImageHeight; y++ {
+				for x := 0; x < p.ImageWidth; x++ {
+					if world[y][x] == 255 {
+						aliveCells = append(aliveCells, util.Cell{
+							X: x,
+							Y: y,
+						})
+					}
+				}
 			}
 
+			c.events <- FinalTurnComplete{CompletedTurns: p.Turns, Alive: aliveCells}
+
+			// Make sure that the Io has finished any output before exiting.
+			c.ioCommand <- ioCheckIdle
+			<-c.ioIdle
+
+			c.events <- StateChange{turn, Quitting}
+
+			// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
+			close(c.events)
 		}
 	}
-	//receive result and updates world & turn
-	world = res.NewWorld
-	//stop the time ticker
-	done <- true
-
-	saveCurWorld(p, c, world, p.Turns)
-
-	// TODO: Report the final state using FinalTurnCompleteEvent.
-	aliveCells := []util.Cell{}
-	for y := 0; y < p.ImageHeight; y++ {
-		for x := 0; x < p.ImageWidth; x++ {
-			if world[y][x] == 255 {
-				aliveCells = append(aliveCells, util.Cell{
-					X: x,
-					Y: y,
-				})
-			}
-		}
-	}
-
-	c.events <- FinalTurnComplete{CompletedTurns: p.Turns, Alive: aliveCells}
-
-	// Make sure that the Io has finished any output before exiting.
-	c.ioCommand <- ioCheckIdle
-	<-c.ioIdle
-
-	c.events <- StateChange{turn, Quitting}
-
-	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
-	close(c.events)
 }

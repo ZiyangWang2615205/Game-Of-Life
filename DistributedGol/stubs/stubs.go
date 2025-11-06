@@ -5,6 +5,7 @@ var EngineCount = "Engine.AliveCellsCount"
 var EngineSave = "Engine.SaveCurrent"
 var EngineOver = "Engine.ShutDown"
 var EnginePaused = "Engine.Paused"
+var EngineResumed = "Engine.Resumed"
 
 type Request struct {
 	World       [][]uint8

@@ -82,57 +82,58 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 				mu.Unlock()
 				return
 			}
-			if paused {
-				mu.Lock()
+
+			for paused {
+				mu.Unlock()
 				time.Sleep(200 * time.Millisecond)
+				mu.Lock()
 			}
-		}
 
-	}()
-	turn := 0
-	for turn < turns {
-		//create new world to store next state
-		newWorld := make([][]uint8, height)
-		for i := range newWorld {
-			newWorld[i] = make([]uint8, width)
-		}
+			//create new world to store next state
+			newWorld := make([][]uint8, height)
+			for i := range newWorld {
+				newWorld[i] = make([]uint8, width)
+			}
 
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
-				aliveNeighbours := calcAliveNeighbours(x, y, world, height, width)
-				//live cell
-				if world[y][x] == 255 {
-					//any live cell with fewer than two/ more than three live neighbours dies
-					if aliveNeighbours < 2 || aliveNeighbours > 3 {
-						newWorld[y][x] = 0
-					} else {
-						//any live cell with more than three live neighbours dies
-						newWorld[y][x] = 255
+			for y := 0; y < height; y++ {
+				for x := 0; x < width; x++ {
+					aliveNeighbours := calcAliveNeighbours(x, y, world, height, width)
+					//live cell
+					if world[y][x] == 255 {
+						//any live cell with fewer than two/ more than three live neighbours dies
+						if aliveNeighbours < 2 || aliveNeighbours > 3 {
+							newWorld[y][x] = 0
+						} else {
+							//any live cell with more than three live neighbours dies
+							newWorld[y][x] = 255
 
+						}
 					}
-				}
 
-				//die cell
-				if world[y][x] == 0 {
-					if aliveNeighbours == 3 {
-						//any dead cell with exactly three live neighbours becomes alive
-						newWorld[y][x] = 255
+					//die cell
+					if world[y][x] == 0 {
+						if aliveNeighbours == 3 {
+							//any dead cell with exactly three live neighbours becomes alive
+							newWorld[y][x] = 255
+						}
 					}
 				}
 			}
+
+			//updates world
+			currentWorld = newWorld
+			currentTurn = t + 1
+			mu.Unlock()
+			time.Sleep(10 * time.Millisecond)
 		}
-
-		//updates world
-		world = newWorld
-		turn++
-
 		mu.Lock()
-		currentTurn = turn
-		currentWorld = world
+		run = false
 		mu.Unlock()
-	}
-	//send result to response pointer
-	res.NewWorld = world
+	}()
+
+	//gain the latest world
+	res.NewWorld = currentWorld
+	res.Turn = currentTurn
 	return nil
 }
 
@@ -155,12 +156,19 @@ func (e *Engine) ShutDown(req stubs.Request, res stubs.Response) error {
 
 func (e *Engine) Paused(req stubs.Request, res stubs.Response) error {
 	mu.Lock()
-	res.IsPaused = !paused
-	res.NewWorld = currentWorld
+	res.IsPaused = true
 	res.Turn = currentTurn
 	mu.Unlock()
 	return nil
 }
+
+func (e *Engine) Resumed(req stubs.Request, res stubs.Response) error {
+	mu.Lock()
+	res.IsPaused = false
+	mu.Unlock()
+	return nil
+}
+
 func main() {
 	//gain the port
 	pAddr := flag.String("port", "8030", "Port to listen on")
