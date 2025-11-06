@@ -75,66 +75,64 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 	currentTurn = 0
 	mu.Unlock()
 
-	go func() {
-		for t := 0; t < turns; t++ {
+	for t := 0; t < turns; t++ {
+		mu.Lock()
+		if !run {
+			mu.Unlock()
+			break
+		}
+
+		for paused {
+			mu.Unlock()
+			time.Sleep(200 * time.Millisecond)
 			mu.Lock()
-			if !run {
-				mu.Unlock()
-				return
-			}
+		}
 
-			for paused {
-				mu.Unlock()
-				time.Sleep(200 * time.Millisecond)
-				mu.Lock()
-			}
+		//create new world to store next state
+		newWorld := make([][]uint8, height)
+		for i := range newWorld {
+			newWorld[i] = make([]uint8, width)
+		}
 
-			//create new world to store next state
-			newWorld := make([][]uint8, height)
-			for i := range newWorld {
-				newWorld[i] = make([]uint8, width)
-			}
+		for y := 0; y < height; y++ {
+			for x := 0; x < width; x++ {
+				aliveNeighbours := calcAliveNeighbours(x, y, world, height, width)
+				//live cell
+				if world[y][x] == 255 {
+					//any live cell with fewer than two/ more than three live neighbours dies
+					if aliveNeighbours < 2 || aliveNeighbours > 3 {
+						newWorld[y][x] = 0
+					} else {
+						//any live cell with more than three live neighbours dies
+						newWorld[y][x] = 255
 
-			for y := 0; y < height; y++ {
-				for x := 0; x < width; x++ {
-					aliveNeighbours := calcAliveNeighbours(x, y, world, height, width)
-					//live cell
-					if world[y][x] == 255 {
-						//any live cell with fewer than two/ more than three live neighbours dies
-						if aliveNeighbours < 2 || aliveNeighbours > 3 {
-							newWorld[y][x] = 0
-						} else {
-							//any live cell with more than three live neighbours dies
-							newWorld[y][x] = 255
-
-						}
 					}
+				}
 
-					//die cell
-					if world[y][x] == 0 {
-						if aliveNeighbours == 3 {
-							//any dead cell with exactly three live neighbours becomes alive
-							newWorld[y][x] = 255
-						}
+				//die cell
+				if world[y][x] == 0 {
+					if aliveNeighbours == 3 {
+						//any dead cell with exactly three live neighbours becomes alive
+						newWorld[y][x] = 255
 					}
 				}
 			}
-
-			//updates world
-			world = newWorld
-			currentWorld = newWorld
-			currentTurn = t + 1
-			mu.Unlock()
-			time.Sleep(100 * time.Millisecond)
 		}
-		mu.Lock()
-		run = false
-		mu.Unlock()
-	}()
 
+		//updates world
+		world = newWorld
+		currentWorld = newWorld
+		currentTurn = t + 1
+		mu.Unlock()
+		time.Sleep(100 * time.Millisecond)
+	}
+	mu.Lock()
+	run = false
 	//gain the latest world
 	res.NewWorld = currentWorld
 	res.Turn = currentTurn
+	mu.Unlock()
+
 	return nil
 }
 
