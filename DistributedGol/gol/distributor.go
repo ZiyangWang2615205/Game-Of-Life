@@ -155,22 +155,28 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 			case 'p':
 				//If p is pressed, pause the processing on the AWS node and have the controller print the current turn that is being processed.
-				var pauseRes stubs.Response
 				if !pause {
-					client.Call(stubs.EnginePaused, stubs.Request{}, &pauseRes)
+					var pauseRes stubs.Response
+					_ = client.Call(stubs.EnginePaused, stubs.Request{}, &pauseRes)
 					fmt.Printf("Turn %d is being processed\n", pauseRes.Turn)
 					pause = true
 					c.events <- StateChange{pauseRes.Turn, Paused}
 				} else {
+					var resumed stubs.Response
 					//If p is pressed again resume the processing and have the controller print Continuing.
-					client.Call(stubs.EngineResumed, stubs.Request{}, &stubs.Response{})
+					_ = client.Call(stubs.EngineResumed, stubs.Request{}, &resumed)
 					fmt.Println("Continuing")
 					pause = false
-					c.events <- StateChange{pauseRes.Turn, Executing}
+					c.events <- StateChange{resumed.Turn, Executing}
 				}
 			}
 		case <-exe:
+			if pause {
+				continue
+			}
+
 			var res stubs.Response
+		_:
 			client.Call(stubs.EngineSave, stubs.Request{}, &res)
 			//stop the time ticker
 			done <- true
