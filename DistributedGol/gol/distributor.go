@@ -111,6 +111,61 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 		log.Fatal("fail to use ExecuteGol: ", err)
 	}
 
+	for {
+		select {
+		case key := <-keyPresses:
+			switch key {
+			case 's':
+				//If s is pressed, the controller should generate a PGM file with the current state of the board.
+				var saveRes stubs.Response
+				err := client.Call(stubs.EngineSave, stubs.Request{}, &saveRes)
+				if err != nil {
+					log.Fatal("fail to use SaveCurrent: ", err)
+				}
+				saveCurWorld(p, c, saveRes.NewWorld, saveRes.Turn)
+
+			case 'q':
+				//If q is pressed, close the controller client program without causing an error on the Gol server.
+				done <- true
+				// Make sure that the Io has finished any output before exiting.
+				c.ioCommand <- ioCheckIdle
+				<-c.ioIdle
+
+				c.events <- StateChange{turn, Quitting}
+
+				// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
+				close(c.events)
+
+			case 'k':
+				//If k is pressed, all components of the distributed system are shut down cleanly, and the system outputs a PGM image of the latest state.
+				var overRes stubs.Response
+				_ = client.Call(stubs.EngineOver, stubs.Request{}, &overRes)
+				saveCurWorld(p, c, overRes.NewWorld, overRes.Turn)
+
+				done <- true
+				c.ioCommand <- ioCheckIdle
+				<-c.ioIdle
+
+				c.events <- StateChange{overRes.Turn, Quitting}
+				close(c.events)
+
+			case 'p':
+				//If p is pressed, pause the processing on the AWS node and have the controller print the current turn that is being processed.
+				var pauseRes stubs.Response
+				if pauseRes.IsPaused {
+					fmt.Printf("Turn %d is being processed\n", pauseRes.Turn)
+					c.events <- StateChange{pauseRes.Turn, Paused}
+				} else {
+					//If p is pressed again resume the processing and have the controller print Continuing.
+					fmt.Println("Continuing")
+					c.events <- StateChange{pauseRes.Turn, Executing}
+				}
+			default:
+				time.Sleep(100 * time.Millisecond)
+			}
+
+		}
+	}
 	//receive result and updates world & turn
 	world = res.NewWorld
 	//stop the time ticker

@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/rpc"
 	"sync"
+	"time"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
 )
@@ -15,6 +16,10 @@ var currentWorld [][]uint8
 // currentTurn used for check current turn
 var currentTurn int
 var mu sync.Mutex
+
+// run used for judge if server should run
+var run bool
+var paused bool
 
 // calcAliveNeighbours counts the number of alive neighbours
 func calcAliveNeighbours(x, y int, world [][]uint8, height, width int) int {
@@ -59,11 +64,31 @@ func (e *Engine) AliveCellsCount(req stubs.Request, res *stubs.Response) error {
 
 func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 	// gain the param
+	mu.Lock()
 	world := req.World
 	turns := req.Turn
 	height := req.ImageHeight
 	width := req.ImageWidth
+	paused = false
+	run = true
+	currentWorld = world
+	currentTurn = 0
+	mu.Unlock()
 
+	go func() {
+		for t := 0; t < turns; t++ {
+			mu.Lock()
+			if !run {
+				mu.Unlock()
+				return
+			}
+			if paused {
+				mu.Lock()
+				time.Sleep(200 * time.Millisecond)
+			}
+		}
+
+	}()
 	turn := 0
 	for turn < turns {
 		//create new world to store next state
@@ -111,6 +136,31 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 	return nil
 }
 
+func (e *Engine) SaveCurrent(req stubs.Request, res stubs.Response) error {
+	mu.Lock()
+	res.NewWorld = currentWorld
+	res.Turn = currentTurn
+	mu.Unlock()
+	return nil
+}
+
+func (e *Engine) ShutDown(req stubs.Request, res stubs.Response) error {
+	mu.Lock()
+	run = false
+	res.NewWorld = currentWorld
+	res.Turn = currentTurn
+	mu.Unlock()
+	return nil
+}
+
+func (e *Engine) Paused(req stubs.Request, res stubs.Response) error {
+	mu.Lock()
+	res.IsPaused = !paused
+	res.NewWorld = currentWorld
+	res.Turn = currentTurn
+	mu.Unlock()
+	return nil
+}
 func main() {
 	//gain the port
 	pAddr := flag.String("port", "8030", "Port to listen on")
