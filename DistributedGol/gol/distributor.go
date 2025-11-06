@@ -123,16 +123,21 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				saveCurWorld(p, c, saveRes.NewWorld, saveRes.Turn)
 
 			case 'q':
+				var saveRes stubs.Response
+				err := client.Call(stubs.EngineSave, stubs.Request{}, &saveRes)
+				if err != nil {
+					log.Fatal("fail to use SaveCurrent: ", err)
+				}
+				saveCurWorld(p, c, saveRes.NewWorld, saveRes.Turn)
+
 				//If q is pressed, close the controller client program without causing an error on the Gol server.
 				done <- true
 				// Make sure that the Io has finished any output before exiting.
 				c.ioCommand <- ioCheckIdle
 				<-c.ioIdle
 
-				c.events <- StateChange{turn, Quitting}
-
-				// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
-				close(c.events)
+				c.events <- StateChange{saveRes.Turn, Quitting}
+				return
 
 			case 'k':
 				//If k is pressed, all components of the distributed system are shut down cleanly, and the system outputs a PGM image of the latest state.
@@ -146,6 +151,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 				c.events <- StateChange{overRes.Turn, Quitting}
 				close(c.events)
+				return
 
 			case 'p':
 				//If p is pressed, pause the processing on the AWS node and have the controller print the current turn that is being processed.
@@ -153,12 +159,13 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				if !pause {
 					client.Call(stubs.EnginePaused, stubs.Request{}, &pauseRes)
 					fmt.Printf("Turn %d is being processed\n", pauseRes.Turn)
-					c.events <- StateChange{pauseRes.Turn, Paused}
 					pause = true
+					c.events <- StateChange{pauseRes.Turn, Paused}
 				} else {
 					//If p is pressed again resume the processing and have the controller print Continuing.
 					client.Call(stubs.EngineResumed, stubs.Request{}, &stubs.Response{})
 					fmt.Println("Continuing")
+					pause = false
 					c.events <- StateChange{pauseRes.Turn, Executing}
 				}
 			}
@@ -187,10 +194,11 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			c.ioCommand <- ioCheckIdle
 			<-c.ioIdle
 
-			c.events <- StateChange{turn, Quitting}
+			c.events <- StateChange{p.Turns, Quitting}
 
 			// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
 			close(c.events)
+			return
 		}
 	}
 }

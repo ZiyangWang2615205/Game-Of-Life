@@ -163,10 +163,11 @@ func (e *Engine) Paused(req stubs.Request, res *stubs.Response) error {
 	return nil
 }
 
-func (e *Engine) Resumed(req stubs.Request, res stubs.Response) error {
+func (e *Engine) Resumed(req stubs.Request, res *stubs.Response) error {
 	mu.Lock()
 	defer mu.Unlock()
 	paused = false
+	res.Turn = currentTurn
 	return nil
 }
 
