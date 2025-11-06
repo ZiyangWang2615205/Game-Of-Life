@@ -124,7 +124,7 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 		currentWorld = newWorld
 		currentTurn = t + 1
 		mu.Unlock()
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 	}
 	mu.Lock()
 	run = false
