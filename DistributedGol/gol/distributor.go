@@ -122,12 +122,18 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	startAliveTicker()
 
 	//added: Variables for tracking state and handling finish logic
-	pausedLocal := false // Client-side pause flag, not relying on the server's response
-	finalized := false   // Avoid duplicate finalization
+
+	//pausedLocal is client-side pause flag, not relying on the server's response
+	pausedLocal := false
+
+	//finalized used for avoiding duplicate finalization
+	finalized := false
+
 	type pend struct {
 		has   bool
 		world [][]uint8
 	}
+
 	pendingFinalize := pend{} // Holds data if rpcDone arrives during pause, processed on resume
 	lastPausedTurn := 0       // Used to send Executing event when resuming
 
@@ -168,7 +174,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 		finalized = true
 	}
 
-	//added:Run ExecuteGol asynchronously so the key input loop can start imediately
+	//added:Run ExecuteGol asynchronously so the key input loop can start immediately
 	// old code : blocking call
 	// err = client.Call(stubs.EngineStart, req, res)
 	// if err != nil {
@@ -179,7 +185,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 		rpcDone <- client.Call(stubs.EngineStart, req, res)
 	}()
 
-	for true { // start for loop
+	for { // start for loop
 		select {
 		//added: Monitor for simulation completion or error
 		case callErr := <-rpcDone:
@@ -260,11 +266,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				newPaused := !pausedLocal
 				pausedLocal = newPaused
 				if newPaused {
-					// On the first 'p' press: always send a Paused event
-					// fmt.Printf("Turn %d is being processed\n", pauseRes.Turn)
-					// c.events <- StateChange{pauseRes.Turn, Paused}
-
-					//changed to: Record the turn number locally
+					//Record the turn number locally
 					lastPausedTurn = pauseRes.Turn
 					fmt.Printf("Turn %d is being processed\n", lastPausedTurn)
 					c.events <- StateChange{lastPausedTurn, Paused}
