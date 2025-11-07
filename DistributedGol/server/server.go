@@ -20,7 +20,7 @@ var mu sync.Mutex
 var run bool
 var paused bool
 
-var height, width int
+var height, width, totalTurns int
 
 // calcAliveNeighbours counts the number of alive neighbours
 func calcAliveNeighbours(x, y int, world [][]uint8, height, width int) int {
@@ -70,6 +70,7 @@ func (e *Engine) Initialise(req stubs.Request, res *stubs.Response) error {
 	//initialise
 	currentWorld = req.World
 	currentTurn = 0
+	totalTurns = req.Turn
 	height = req.ImageHeight
 	width = req.ImageWidth
 	paused = false
@@ -93,7 +94,7 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 	}
 
 	//execution end
-	if currentTurn >= req.Turn {
+	if currentTurn >= totalTurns {
 		run = false
 		res.NewWorld = currentWorld
 		res.Turn = currentTurn
