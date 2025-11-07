@@ -20,10 +20,8 @@ var mu sync.Mutex
 var run bool
 var paused bool
 
-// ------------------------- 신규: 계산 정지/재개를 위한 조건변수 -------------------------
+// added: Condition variable for pausing and resuming computation
 var cond = sync.NewCond(&mu)
-
-//------------------------- 신규 끝 ----------------------------------------------------
 
 // calcAliveNeighbours counts the number of alive neighbours
 func calcAliveNeighbours(x, y int, world [][]uint8, height, width int) int {
@@ -79,7 +77,7 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 	currentTurn = 0
 	mu.Unlock()
 
-	// 기존 보조 고루틴은 pause에 실질 영향이 없어서 제거
+	// The previous helper goroutine had no real effect on pause, so it was removed
 	// go func() {
 	// 	for t := 0; t < turns; t++ {
 	// 		mu.Lock()
@@ -96,18 +94,17 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 
 	turn := 0
 	for turn < turns {
-		//------------------------- 신규: 여기서 pause를 실제로 블록 -------------------------
+		//added: Actually block here while paused
 		mu.Lock()
 		for paused {
-			cond.Wait() // Resume 시 Broadcast로 깨어남
+			cond.Wait() //  Wakes up when Broadcast is called on resume
 		}
-		if !run { // k로 종료된 경우 등
+		if !run { // Handles cases such as termination via k command
 			res.NewWorld = world
 			mu.Unlock()
 			return nil
 		}
 		mu.Unlock()
-		//------------------------- 신규 끝 ------------------------------------------------
 
 		//create new world to store next state
 		newWorld := make([][]uint8, height)
@@ -155,7 +152,7 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 }
 
 // func (e *Engine) SaveCurrent(req stubs.Request, res stubs.Response) error {
-func (e *Engine) SaveCurrent(req stubs.Request, res *stubs.Response) error { // ------------------------- 포인터로 수정
+func (e *Engine) SaveCurrent(req stubs.Request, res *stubs.Response) error { // Changed to pointer
 	mu.Lock()
 	res.NewWorld = currentWorld
 	res.Turn = currentTurn
@@ -164,10 +161,10 @@ func (e *Engine) SaveCurrent(req stubs.Request, res *stubs.Response) error { // 
 }
 
 // func (e *Engine) ShutDown(req stubs.Request, res stubs.Response) error {
-func (e *Engine) ShutDown(req stubs.Request, res *stubs.Response) error { // ------------------------- 포인터로 수정
+func (e *Engine) ShutDown(req stubs.Request, res *stubs.Response) error { // Chainged to pointer
 	mu.Lock()
 	run = false
-	cond.Broadcast() // ------------------------- 신규: 대기 중 루프 깨우기
+	cond.Broadcast() // added: Wake up any waiting loops
 	res.NewWorld = currentWorld
 	res.Turn = currentTurn
 	mu.Unlock()
@@ -175,11 +172,11 @@ func (e *Engine) ShutDown(req stubs.Request, res *stubs.Response) error { // ---
 }
 
 // func (e *Engine) Paused(req stubs.Request, res stubs.Response) error {
-func (e *Engine) Paused(req stubs.Request, res *stubs.Response) error { // ------------------------- 토글 + 포인터 수정
+func (e *Engine) Paused(req stubs.Request, res *stubs.Response) error { // Changed the toggle and pointer
 	mu.Lock()
 	paused = !paused
 	if !paused {
-		cond.Broadcast() // 재개
+		cond.Broadcast() // resume
 	}
 	res.IsPaused = paused
 	res.NewWorld = currentWorld
