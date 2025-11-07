@@ -77,21 +77,6 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 	currentTurn = 0
 	mu.Unlock()
 
-	// The previous helper goroutine had no real effect on pause, so it was removed
-	// go func() {
-	// 	for t := 0; t < turns; t++ {
-	// 		mu.Lock()
-	// 		if !run {
-	// 			mu.Unlock()
-	// 			return
-	// 		}
-	// 		if paused {
-	// 			mu.Lock()
-	// 			time.Sleep(200 * time.Millisecond)
-	// 		}
-	// 	}
-	// }()
-
 	turn := 0
 	for turn < turns {
 		//added: Actually block here while paused
@@ -151,8 +136,7 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 	return nil
 }
 
-// func (e *Engine) SaveCurrent(req stubs.Request, res stubs.Response) error {
-func (e *Engine) SaveCurrent(req stubs.Request, res *stubs.Response) error { // Changed to pointer
+func (e *Engine) SaveCurrent(req stubs.Request, res *stubs.Response) error {
 	mu.Lock()
 	res.NewWorld = currentWorld
 	res.Turn = currentTurn
@@ -160,8 +144,7 @@ func (e *Engine) SaveCurrent(req stubs.Request, res *stubs.Response) error { // 
 	return nil
 }
 
-// func (e *Engine) ShutDown(req stubs.Request, res stubs.Response) error {
-func (e *Engine) ShutDown(req stubs.Request, res *stubs.Response) error { // Chainged to pointer
+func (e *Engine) ShutDown(req stubs.Request, res *stubs.Response) error {
 	mu.Lock()
 	run = false
 	cond.Broadcast() // added: Wake up any waiting loops
@@ -171,13 +154,12 @@ func (e *Engine) ShutDown(req stubs.Request, res *stubs.Response) error { // Cha
 	return nil
 }
 
-// func (e *Engine) Paused(req stubs.Request, res stubs.Response) error {
 func (e *Engine) Paused(req stubs.Request, res *stubs.Response) error { // Changed the toggle and pointer
 	mu.Lock()
-	paused = !paused
-	if !paused {
+	if paused {
 		cond.Broadcast() // resume
 	}
+	paused = !paused
 	res.IsPaused = paused
 	res.NewWorld = currentWorld
 	res.Turn = currentTurn
