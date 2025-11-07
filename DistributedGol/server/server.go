@@ -156,10 +156,10 @@ func (e *Engine) ShutDown(req stubs.Request, res *stubs.Response) error {
 
 func (e *Engine) Paused(req stubs.Request, res *stubs.Response) error { // Changed the toggle and pointer
 	mu.Lock()
-	paused = !paused
 	if paused {
 		cond.Broadcast() // resume
 	}
+	paused = !paused
 	res.IsPaused = paused
 	res.NewWorld = currentWorld
 	res.Turn = currentTurn
