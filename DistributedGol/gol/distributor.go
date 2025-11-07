@@ -43,7 +43,7 @@ func saveCurWorld(p Params, c distributorChannels, world [][]uint8, turn int) {
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//connect with AWS server
-	server := "98.93.248.212:8030"
+	server := "98.93.12.89:8030"
 	client, err := rpc.Dial("tcp", server)
 	if err != nil {
 		log.Fatal("Dialing: ", err)
@@ -83,27 +83,93 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//RPC AliveCellsCount
 	ticker := time.NewTicker(2 * time.Second)
 	done := make(chan bool)
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				var aliveRes stubs.Response
-				err = client.Call(stubs.EngineCount, stubs.Request{}, &aliveRes)
-				if err != nil {
-					log.Fatal("fail to use AliveCellsCount: ", err)
-				}
-				//send the AliveCellsCount event
-				c.events <- AliveCellsCount{
-					CompletedTurns: aliveRes.Turn,
-					CellsCount:     aliveRes.AliveCells,
-				}
 
-			case <-done:
-				ticker.Stop()
-				return
+	//------------------------- 신규: AliveCellsCount 단조 증가 보장용 상태 -------------------------
+	lastAliveTurnSent := -1
+	startAliveTicker := func() {
+		// 기존 고루틴을 재가동할 때 사용
+		go func() {
+			for {
+				select {
+				case <-ticker.C:
+					var aliveRes stubs.Response
+					err = client.Call(stubs.EngineCount, stubs.Request{}, &aliveRes)
+					if err != nil {
+						log.Fatal("fail to use AliveCellsCount: ", err)
+					}
+					//send the AliveCellsCount event
+					// 기존: 항상 전송
+					// c.events <- AliveCellsCount{CompletedTurns: aliveRes.Turn, CellsCount: aliveRes.AliveCells}
+
+					//------------------------- 신규: 이전에 보낸 CompletedTurns 보다 작거나 같으면 드롭 -------------------------
+					if aliveRes.Turn <= lastAliveTurnSent {
+						// skip stale or duplicate turn reports
+						continue
+					}
+					lastAliveTurnSent = aliveRes.Turn
+					c.events <- AliveCellsCount{
+						CompletedTurns: aliveRes.Turn,
+						CellsCount:     aliveRes.AliveCells,
+					}
+					//------------------------- 신규 끝 -------------------------
+
+				case <-done:
+					ticker.Stop()
+					return
+				}
+			}
+		}()
+	}
+	startAliveTicker()
+	//------------------------- 신규 끝 ------------------------------------------------------------
+
+	//------------------------- 신규: 상태/마감 관리 변수 & 마감 함수 -------------------------
+	pausedLocal := false // 클라이언트가 인지한 일시정지 상태(서버 응답에 의존하지 않음)
+	finalized := false   // 중복 마감 방지
+	type pend struct {
+		has   bool
+		world [][]uint8
+	}
+	pendingFinalize := pend{} // Paused 중 rpcDone이 온 경우, 재개 때 처리
+	lastPausedTurn := 0       // 재개 시 Executing 이벤트용으로 사용
+	//------------------------- 신규 끝 ------------------------------------------------------------
+
+	finalize := func(finalWorld [][]uint8, finalTurn int) {
+		if finalized {
+			return
+		}
+		//receive result and updates world & turn
+		world = finalWorld
+		//stop the time ticker
+		done <- true
+
+		saveCurWorld(p, c, world, finalTurn)
+
+		// TODO: Report the final state using FinalTurnCompleteEvent.
+		aliveCells := []util.Cell{}
+		for y := 0; y < p.ImageHeight; y++ {
+			for x := 0; x < p.ImageWidth; x++ {
+				if world[y][x] == 255 {
+					aliveCells = append(aliveCells, util.Cell{
+						X: x,
+						Y: y,
+					})
+				}
 			}
 		}
-	}()
+
+		c.events <- FinalTurnComplete{CompletedTurns: finalTurn, Alive: aliveCells}
+
+		// Make sure that the Io has finished any output before exiting.
+		c.ioCommand <- ioCheckIdle
+		<-c.ioIdle
+
+		c.events <- StateChange{turn, Quitting}
+
+		// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
+		close(c.events)
+		finalized = true
+	}
 
 	//------------------------- 신규: ExecuteGol을 비동기로 실행하여 키 루프가 즉시 시작되도록 함 -------------------------
 	// 기존(블로킹) 호출
@@ -124,37 +190,14 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			if callErr != nil {
 				log.Fatal("fail to use ExecuteGol: ", callErr)
 			}
-			//receive result and updates world & turn
-			world = res.NewWorld
-			//stop the time ticker
-			done <- true
-
-			saveCurWorld(p, c, world, p.Turns)
-
-			// TODO: Report the final state using FinalTurnCompleteEvent.
-			aliveCells := []util.Cell{}
-			for y := 0; y < p.ImageHeight; y++ {
-				for x := 0; x < p.ImageWidth; x++ {
-					if world[y][x] == 255 {
-						aliveCells = append(aliveCells, util.Cell{
-							X: x,
-							Y: y,
-						})
-					}
-				}
+			// Paused 중이면 마감 보류, 아니면 즉시 마감
+			if pausedLocal {
+				// 재개되면 곧바로 마감하기 위해 보류
+				pendingFinalize = pend{has: true, world: res.NewWorld}
+			} else {
+				finalize(res.NewWorld, p.Turns)
+				return
 			}
-
-			c.events <- FinalTurnComplete{CompletedTurns: p.Turns, Alive: aliveCells}
-
-			// Make sure that the Io has finished any output before exiting.
-			c.ioCommand <- ioCheckIdle
-			<-c.ioIdle
-
-			c.events <- StateChange{turn, Quitting}
-
-			// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
-			close(c.events)
-			return
 		//------------------------- 신규 끝 ------------------------------------------------
 
 		case key := <-keyPresses:
@@ -170,6 +213,13 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 			case 'q':
 				//If q is pressed, close the controller client program without causing an error on the Gol server.
+				//------------------------- 신규: 최신 상태 저장 후 종료 (Pause 중에도 동작) -------------------------
+				var saveRes stubs.Response
+				if err := client.Call(stubs.EngineSave, stubs.Request{}, &saveRes); err == nil {
+					saveCurWorld(p, c, saveRes.NewWorld, saveRes.Turn)
+				}
+				// 기존: done <- true 만 하고 저장 없이 종료
+				// done <- true
 				done <- true
 				// Make sure that the Io has finished any output before exiting.
 				c.ioCommand <- ioCheckIdle
@@ -180,6 +230,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
 				close(c.events)
 				return
+				//------------------------- 신규 끝 -------------------------
 
 			case 'k':
 				//If k is pressed, all components of the distributed system are shut down cleanly, and the system outputs a PGM image of the latest state.
@@ -199,18 +250,63 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				//If p is pressed, pause the processing on the AWS node and have the controller print the current turn that is being processed.
 				//If p is pressed again resume the processing and have the controller print Continuing.
 				var pauseRes stubs.Response
+
+				//------------------------- 신규: Pause 경쟁 줄이기 위해 Alive 틱커 잠시 중단 -------------------------
+				// (EngineCount가 월드 전체를 스캔하며 뮤텍스를 오래 잡을 수 있으므로, p 처리 전에 중단)
+				done <- true
+				// 새 틱커 인스턴스 준비 (재시작용)
+				ticker = time.NewTicker(2 * time.Second)
+				//------------------------- 신규 끝 -------------------------
+
 				//------------------------- 신규: 서버에 토글 RPC 호출 -------------------------
 				if err := client.Call(stubs.EnginePaused, stubs.Request{}, &pauseRes); err != nil {
 					log.Fatal("fail to toggle pause: ", err)
 				}
 				//------------------------- 신규 끝 -------------------------
-				if pauseRes.IsPaused {
-					fmt.Printf("Turn %d is being processed\n", pauseRes.Turn)
-					c.events <- StateChange{pauseRes.Turn, Paused}
+				//------------------------- 신규: 서버의 IsPaused 의미가 뒤집혀도 클라가 자체 토글로 보장 -------------------------
+				newPaused := !pausedLocal
+				pausedLocal = newPaused
+				if newPaused {
+					// 첫 p: 반드시 Paused 이벤트를 보냄
+					// fmt.Printf("Turn %d is being processed\n", pauseRes.Turn)
+					// c.events <- StateChange{pauseRes.Turn, Paused}
+					//------------------------- 변경: 로컬에도 턴 기록 -------------------------
+					lastPausedTurn = pauseRes.Turn
+					fmt.Printf("Turn %d is being processed\n", lastPausedTurn)
+					c.events <- StateChange{lastPausedTurn, Paused}
+					//------------------------- 변경 끝 -------------------------
+
+					//------------------------- 신규: 일시정지 중에도 Alive 이벤트는 필요 없으므로 재시작은 하지 않아도 무방
+					// (테스트에서는 키 이벤트만 검증) 그래도 일관성을 위해 재시작해 둔다.
+					startAliveTicker()
+					//------------------------- 신규 끝 -------------------------
+
 				} else {
+					// 재개: 테스트는 Executing 이벤트를 기대
+					// 만약 시뮬이 이미 끝나서 rpcDone이 대기 중이면, Executing을 먼저 내보내고 즉시 마감
+					if pendingFinalize.has && !finalized {
+						// Executing 이벤트를 먼저 보내 기대를 충족
+						// fmt.Println("Continuing")
+						// c.events <- StateChange{pauseRes.Turn, Executing}
+						//------------------------- 변경: Executing의 CompletedTurns를 마지막 Paused 기준으로 보냄 -------------------------
+						fmt.Println("Continuing")
+						c.events <- StateChange{lastPausedTurn, Executing}
+						//------------------------- 변경 끝 -------------------------
+						finalize(pendingFinalize.world, p.Turns)
+						return
+					}
+					// fmt.Println("Continuing")
+					// c.events <- StateChange{pauseRes.Turn, Executing}
+					//------------------------- 변경: 일반 재개도 lastPausedTurn로 Executing 이벤트 -------------------------
 					fmt.Println("Continuing")
-					c.events <- StateChange{pauseRes.Turn, Executing}
+					c.events <- StateChange{lastPausedTurn, Executing}
+					//------------------------- 변경 끝 -------------------------
+
+					//------------------------- 신규: 재개 후 Alive 틱커 재시작 -------------------------
+					startAliveTicker()
+					//------------------------- 신규 끝 -------------------------
 				}
+				//------------------------- 신규 끝 -------------------------
 			default:
 				time.Sleep(100 * time.Millisecond)
 			}

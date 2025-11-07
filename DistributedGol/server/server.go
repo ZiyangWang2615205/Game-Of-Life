@@ -79,7 +79,7 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 	currentTurn = 0
 	mu.Unlock()
 
-	// 기존 보조 고루틴은 pause에 실질 영향이 없음 → 제거
+	// 기존 보조 고루틴은 pause에 실질 영향이 없어서 제거
 	// go func() {
 	// 	for t := 0; t < turns; t++ {
 	// 		mu.Lock()
