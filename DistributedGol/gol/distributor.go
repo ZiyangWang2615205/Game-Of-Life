@@ -70,17 +70,34 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	turn := 0
 	c.events <- StateChange{turn, Executing}
 
+	//RPC Initialise
+	var initRes stubs.Response
+	err = client.Call(stubs.EngineInit, stubs.Request{
+		World:       world,
+		Turn:        p.Turns,
+		ImageHeight: p.ImageHeight,
+		ImageWidth:  p.ImageWidth,
+	}, &initRes)
+	if err != nil {
+		log.Fatal("fail to initialise engine: ", err)
+	}
+
 	//RPC ExecuteGol
 	exe := make(chan struct{})
 	go func() {
-		var executeRes stubs.Response
-		_ = client.Call(stubs.EngineStart, stubs.Request{
-			World:       world,
-			Turn:        p.Turns,
-			ImageHeight: p.ImageHeight,
-			ImageWidth:  p.ImageWidth,
-		}, &executeRes)
-		close(exe)
+		for {
+			time.Sleep(20 * time.Millisecond)
+			var executeRes stubs.Response
+			err := client.Call(stubs.EngineStart, stubs.Request{}, &executeRes)
+			if err != nil {
+				log.Fatal("fail to make engine execute")
+			}
+
+			if executeRes.Turn >= p.Turns {
+				close(exe)
+				return
+			}
+		}
 	}()
 
 	//RPC AliveCellsCount
@@ -171,10 +188,6 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				}
 			}
 		case <-exe:
-			if pause {
-				continue
-			}
-
 			var res stubs.Response
 		_:
 			client.Call(stubs.EngineSave, stubs.Request{}, &res)

@@ -5,7 +5,6 @@ import (
 	"net"
 	"net/rpc"
 	"sync"
-	"time"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
 )
@@ -62,77 +61,87 @@ func (e *Engine) AliveCellsCount(req stubs.Request, res *stubs.Response) error {
 	return nil
 }
 
-func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
-	// gain the param
+func (e *Engine) Initialise(req stubs.Request, res *stubs.Response) error {
 	mu.Lock()
-	world := req.World
-	turns := req.Turn
-	height := req.ImageHeight
-	width := req.ImageWidth
+	defer mu.Unlock()
+
+	//initialise
+	currentWorld = req.World
+	currentTurn = 0
 	paused = false
 	run = true
-	currentWorld = world
-	currentTurn = 0
-	mu.Unlock()
 
-	for t := 0; t < turns; t++ {
-		mu.Lock()
-		if !run {
-			mu.Unlock()
-			break
-		}
+	//return the initialise state
+	res.NewWorld = currentWorld
+	res.Turn = currentTurn
+	return nil
+}
 
-		for paused {
-			mu.Unlock()
-			time.Sleep(200 * time.Millisecond)
-			mu.Lock()
-		}
+func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
+	mu.Lock()
+	defer mu.Unlock()
 
-		//create new world to store next state
-		newWorld := make([][]uint8, height)
-		for i := range newWorld {
-			newWorld[i] = make([]uint8, width)
-		}
+	//press 'k'
+	if !run {
+		res.NewWorld = currentWorld
+		res.Turn = currentTurn
+		return nil
+	}
 
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
-				aliveNeighbours := calcAliveNeighbours(x, y, world, height, width)
-				//live cell
-				if world[y][x] == 255 {
-					//any live cell with fewer than two/ more than three live neighbours dies
-					if aliveNeighbours < 2 || aliveNeighbours > 3 {
-						newWorld[y][x] = 0
-					} else {
-						//any live cell with more than three live neighbours dies
-						newWorld[y][x] = 255
+	//execution end
+	if currentTurn >= req.Turn {
+		run = false
+		res.NewWorld = currentWorld
+		res.Turn = currentTurn
+		return nil
+	}
 
-					}
+	//press 'p'
+	if paused {
+		res.NewWorld = currentWorld
+		res.Turn = currentTurn
+		return nil
+	}
+
+	//deal with gol logic
+	//gain param first
+	height := req.ImageHeight
+	width := req.ImageWidth
+	newWorld := make([][]uint8, height)
+	for i := range newWorld {
+		newWorld[i] = make([]uint8, width)
+	}
+
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			aliveNeighbours := calcAliveNeighbours(x, y, currentWorld, height, width)
+			//live cell
+			if currentWorld[y][x] == 255 {
+				//any live cell with fewer than two/ more than three live neighbours dies
+				if aliveNeighbours < 2 || aliveNeighbours > 3 {
+					newWorld[y][x] = 0
+				} else {
+					//any live cell with more than three live neighbours dies
+					newWorld[y][x] = 255
+
 				}
+			}
 
-				//die cell
-				if world[y][x] == 0 {
-					if aliveNeighbours == 3 {
-						//any dead cell with exactly three live neighbours becomes alive
-						newWorld[y][x] = 255
-					}
+			//die cell
+			if currentWorld[y][x] == 0 {
+				if aliveNeighbours == 3 {
+					//any dead cell with exactly three live neighbours becomes alive
+					newWorld[y][x] = 255
 				}
 			}
 		}
-
-		//updates world
-		world = newWorld
-		currentWorld = newWorld
-		currentTurn = t + 1
-		mu.Unlock()
-		time.Sleep(500 * time.Millisecond)
 	}
-	mu.Lock()
-	run = false
-	//gain the latest world
+
+	//updates world
+	currentWorld = newWorld
+	currentTurn++
 	res.NewWorld = currentWorld
 	res.Turn = currentTurn
-	mu.Unlock()
-
 	return nil
 }
 
