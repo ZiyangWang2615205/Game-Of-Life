@@ -20,6 +20,8 @@ var mu sync.Mutex
 var run bool
 var paused bool
 
+var height, width int
+
 // calcAliveNeighbours counts the number of alive neighbours
 func calcAliveNeighbours(x, y int, world [][]uint8, height, width int) int {
 	count := 0
@@ -68,6 +70,8 @@ func (e *Engine) Initialise(req stubs.Request, res *stubs.Response) error {
 	//initialise
 	currentWorld = req.World
 	currentTurn = 0
+	height = req.ImageHeight
+	width = req.ImageWidth
 	paused = false
 	run = true
 
@@ -104,9 +108,6 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 	}
 
 	//deal with gol logic
-	//gain param first
-	height := req.ImageHeight
-	width := req.ImageWidth
 	newWorld := make([][]uint8, height)
 	for i := range newWorld {
 		newWorld[i] = make([]uint8, width)
@@ -180,6 +181,7 @@ func (e *Engine) Resumed(req stubs.Request, res *stubs.Response) error {
 
 func main() {
 	//gain the port
+
 	pAddr := flag.String("port", "8030", "Port to listen on")
 	flag.Parse()
 	rpc.Register(&Engine{})
