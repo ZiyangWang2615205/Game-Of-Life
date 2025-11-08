@@ -17,4 +17,6 @@ type Response struct {
 	NewWorld   [][]uint8
 	AliveCells int
 	Turn       int
+	//delete IsPaused
+	//IsPaused is useless because client has pausedLocal to record paused state
 }

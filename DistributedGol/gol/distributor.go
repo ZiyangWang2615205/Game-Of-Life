@@ -257,7 +257,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				if err := client.Call(stubs.EnginePaused, stubs.Request{}, &pauseRes); err != nil {
 					log.Fatal("fail to toggle pause: ", err)
 				}
-				//added: Even if the server’s IsPaused flag behaves inversely, client maintains its own toggle for consistency
+				//change paused state as long as press p
 				newPaused := !pausedLocal
 				pausedLocal = newPaused
 				if newPaused {
@@ -275,10 +275,6 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 					// If the simulation has already finished and rpcDone is waiting,
 					// send Executing event first to satisfy the test and then finalize immediately
 					if pendingFinalize.shouldPaused && !finalized {
-						// Emit the Executing event first to meet the test expectation
-						// fmt.Println("Continuing")
-						// c.events <- StateChange{pauseRes.Turn, Executing}
-
 						//changed to: Send Executing event using the last paused turn number
 						fmt.Println("Continuing")
 						c.events <- StateChange{lastPausedTurn, Executing}
@@ -286,9 +282,6 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 						finalize(pendingFinalize.world, p.Turns)
 						return
 					}
-					// fmt.Println("Continuing")
-					// c.events <- StateChange{pauseRes.Turn, Executing}
-
 					//changed to: When resuming normally, also send Executing event with lastPausedTurn
 					fmt.Println("Continuing")
 					c.events <- StateChange{lastPausedTurn, Executing}
