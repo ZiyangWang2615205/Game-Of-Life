@@ -160,7 +160,6 @@ func (e *Engine) Paused(req stubs.Request, res *stubs.Response) error { // Chang
 		cond.Broadcast() // resume
 	}
 	paused = !paused
-	res.IsPaused = paused
 	res.NewWorld = currentWorld
 	res.Turn = currentTurn
 	mu.Unlock()

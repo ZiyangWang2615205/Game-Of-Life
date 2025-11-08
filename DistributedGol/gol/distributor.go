@@ -43,7 +43,7 @@ func saveCurWorld(p Params, c distributorChannels, world [][]uint8, turn int) {
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//connect with AWS server
-	server := "18.234.236.160:8030"
+	server := "3.91.159.142:8030"
 	client, err := rpc.Dial("tcp", server)
 	if err != nil {
 		log.Fatal("Dialing: ", err)
@@ -97,7 +97,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 					if err != nil {
 						log.Fatal("fail to use AliveCellsCount: ", err)
 					}
-					//send the AliveCellsCount event
+					// send the AliveCellsCount event
 					// old code was always sending data
 					// c.events <- AliveCellsCount{CompletedTurns: aliveRes.Turn, CellsCount: aliveRes.AliveCells}
 
@@ -130,8 +130,8 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	finalized := false
 
 	type pend struct {
-		has   bool
-		world [][]uint8
+		shouldPaused bool
+		world        [][]uint8
 	}
 
 	pendingFinalize := pend{} // Holds data if rpcDone arrives during pause, processed on resume
@@ -174,28 +174,23 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 		finalized = true
 	}
 
-	//added:Run ExecuteGol asynchronously so the key input loop can start immediately
-	// old code : blocking call
-	// err = client.Call(stubs.EngineStart, req, res)
-	// if err != nil {
-	// 	log.Fatal("fail to use ExecuteGol: ", err)
-	// }
+	//Run ExecuteGol asynchronously so the key input loop can start immediately
 	rpcDone := make(chan error, 1)
 	go func() {
 		rpcDone <- client.Call(stubs.EngineStart, req, res)
 	}()
 
-	for { // start for loop
+	for {
 		select {
 		//added: Monitor for simulation completion or error
-		case callErr := <-rpcDone:
-			if callErr != nil {
-				log.Fatal("fail to use ExecuteGol: ", callErr)
+		case dealErr := <-rpcDone:
+			if dealErr != nil {
+				log.Fatal("fail to use ExecuteGol: ", dealErr)
 			}
 			// If paused, delay finalization. otherwise, finalize immediately
 			if pausedLocal {
 				// Keep result pending to finalize right after resume
-				pendingFinalize = pend{has: true, world: res.NewWorld}
+				pendingFinalize = pend{shouldPaused: true, world: res.NewWorld}
 			} else {
 				finalize(res.NewWorld, p.Turns)
 				return
@@ -279,7 +274,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 					// On resume the test expects an Executing event
 					// If the simulation has already finished and rpcDone is waiting,
 					// send Executing event first to satisfy the test and then finalize immediately
-					if pendingFinalize.has && !finalized {
+					if pendingFinalize.shouldPaused && !finalized {
 						// Emit the Executing event first to meet the test expectation
 						// fmt.Println("Continuing")
 						// c.events <- StateChange{pauseRes.Turn, Executing}

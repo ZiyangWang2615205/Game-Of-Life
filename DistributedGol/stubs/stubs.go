@@ -17,5 +17,4 @@ type Response struct {
 	NewWorld   [][]uint8
 	AliveCells int
 	Turn       int
-	IsPaused   bool
 }
