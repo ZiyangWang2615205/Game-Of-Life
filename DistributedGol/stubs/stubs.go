@@ -1,22 +1,42 @@
 package stubs
 
-var EngineStart = "Engine.ExecuteGol"
-var EngineCount = "Engine.AliveCellsCount"
-var EngineSave = "Engine.SaveCurrent"
-var EngineOver = "Engine.ShutDown"
-var EnginePaused = "Engine.Paused"
+// for Broker
 
-type Request struct {
+var BrokerStart = "Broker.Start"
+var BrokerCount = "Broker.AliveCellsCount"
+var BrokerSave = "Broker.SaveCurrent"
+var BrokerPause = "Broker.Pause"
+var BrokerShutdown = "Broker.Shutdown"
+
+type BrokerRequest struct {
 	World       [][]uint8
-	Turn        int
+	Turns       int
 	ImageHeight int
 	ImageWidth  int
+	Workers     []string
 }
 
-type Response struct {
-	NewWorld   [][]uint8
-	AliveCells int
+type BrokerResponse struct {
+	World      [][]uint8
 	Turn       int
-	//delete IsPaused
-	//IsPaused is useless because client has pausedLocal to record paused state
+	AliveCells int
+	Paused     bool
+	Done       bool
+	Err        string
+}
+
+//for workers
+
+var WorkerStep = "Worker.Step"
+
+type WorkerRequest struct {
+	World  [][]uint8
+	StartY int
+	EndY   int
+	Width  int
+	Height int
+}
+
+type WorkerResponse struct {
+	RowRes [][]uint8
 }

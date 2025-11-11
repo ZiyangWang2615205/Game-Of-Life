@@ -4,24 +4,9 @@ import (
 	"flag"
 	"net"
 	"net/rpc"
-	"sync"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
 )
-
-// currentWorld used for check alive cells nums
-var currentWorld [][]uint8
-
-// currentTurn used for check current turn
-var currentTurn int
-var mu sync.Mutex
-
-// run used for judge if server should run
-var run bool
-var paused bool
-
-// added: Condition variable for pausing and resuming computation
-var cond = sync.NewCond(&mu)
 
 // calcAliveNeighbours counts the number of alive neighbours
 func calcAliveNeighbours(x, y int, world [][]uint8, height, width int) int {
@@ -74,14 +59,14 @@ func calcResRow(world [][]uint8, startY, endY, height, width int) [][]uint8 {
 
 type Worker struct{}
 
+// Step used to receive one row result from one worker
 func (w *Worker) Step(req stubs.WorkerRequest, res *stubs.WorkerResponse) error {
 	res.RowRes = calcResRow(req.World, req.StartY, req.EndY, req.Height, req.Width)
 	return nil
 }
 
 func main() {
-	//gain the port
-	pAddr := flag.String("port", "8030", "Port to listen on")
+	pAddr := flag.String("port", "8031", "Port to listen on")
 	flag.Parse()
 	rpc.Register(&Worker{})
 	ln, _ := net.Listen("tcp", ":"+*pAddr)

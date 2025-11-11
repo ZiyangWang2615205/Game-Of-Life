@@ -43,7 +43,7 @@ func saveCurWorld(p Params, c distributorChannels, world [][]uint8, turn int) {
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//connect with AWS server
-	server := "3.91.159.142:8030"
+	server := "3.91.159.142:8050"
 	client, err := rpc.Dial("tcp", server)
 	if err != nil {
 		log.Fatal("Dialing: ", err)
@@ -71,16 +71,16 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	c.events <- StateChange{turn, Executing}
 
 	//create RPC
-	req := stubs.Request{
+	req := stubs.BrokerRequest{
 		World:       world,
-		Turn:        p.Turns,
+		Turns:       p.Turns,
 		ImageHeight: p.ImageHeight,
 		ImageWidth:  p.ImageWidth,
 	}
 
-	var res *stubs.Response = &stubs.Response{}
+	var res stubs.BrokerResponse
 
-	//RPC AliveCellsCount
+	//update and send alive cells count each 2s
 	ticker := time.NewTicker(2 * time.Second)
 	done := make(chan bool)
 
@@ -92,8 +92,8 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			for {
 				select {
 				case <-ticker.C:
-					var aliveRes stubs.Response
-					err = client.Call(stubs.EngineCount, stubs.Request{}, &aliveRes)
+					var aliveRes stubs.BrokerResponse
+					err = client.Call(stubs.BrokerCount, stubs.BrokerRequest{}, &aliveRes)
 					if err != nil {
 						log.Fatal("fail to use AliveCellsCount: ", err)
 					}
@@ -177,7 +177,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//Run ExecuteGol asynchronously so the key input loop can start immediately
 	rpcDone := make(chan error, 1)
 	go func() {
-		rpcDone <- client.Call(stubs.EngineStart, req, res)
+		rpcDone <- client.Call(stubs.BrokerStart, req, res)
 	}()
 
 	for {
@@ -190,9 +190,9 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			// If paused, delay finalization. otherwise, finalize immediately
 			if pausedLocal {
 				// Keep result pending to finalize right after resume
-				pendingFinalize = pend{shouldPaused: true, world: res.NewWorld}
+				pendingFinalize = pend{shouldPaused: true, world: res.World}
 			} else {
-				finalize(res.NewWorld, p.Turns)
+				finalize(res.World, p.Turns)
 				return
 			}
 
@@ -200,20 +200,20 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			switch key {
 			case 's':
 				//If s is pressed, the controller should generate a PGM file with the current state of the board.
-				var saveRes stubs.Response
-				err := client.Call(stubs.EngineSave, stubs.Request{}, &saveRes)
+				var saveRes stubs.BrokerResponse
+				err := client.Call(stubs.BrokerSave, stubs.BrokerRequest{}, &saveRes)
 				if err != nil {
 					log.Fatal("fail to use SaveCurrent: ", err)
 				}
-				saveCurWorld(p, c, saveRes.NewWorld, saveRes.Turn)
+				saveCurWorld(p, c, saveRes.World, saveRes.Turn)
 
 			case 'q':
 				//If q is pressed, close the controller client program without causing an error on the Gol server.
 
 				//added: Save the latest state before exiting (works even while paused)
-				var saveRes stubs.Response
-				if err := client.Call(stubs.EngineSave, stubs.Request{}, &saveRes); err == nil {
-					saveCurWorld(p, c, saveRes.NewWorld, saveRes.Turn)
+				var saveRes stubs.BrokerResponse
+				if err := client.Call(stubs.BrokerSave, stubs.BrokerRequest{}, &saveRes); err == nil {
+					saveCurWorld(p, c, saveRes.World, saveRes.Turn)
 				}
 				// Old code was only sent done <- true without saving the state
 				// done <- true
@@ -230,9 +230,9 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 			case 'k':
 				//If k is pressed, all components of the distributed system are shut down cleanly, and the system outputs a PGM image of the latest state.
-				var overRes stubs.Response
-				_ = client.Call(stubs.EngineOver, stubs.Request{}, &overRes)
-				saveCurWorld(p, c, overRes.NewWorld, overRes.Turn)
+				var overRes stubs.BrokerResponse
+				_ = client.Call(stubs.BrokerShutdown, stubs.BrokerRequest{}, &overRes)
+				saveCurWorld(p, c, overRes.World, overRes.Turn)
 
 				done <- true
 				c.ioCommand <- ioCheckIdle
@@ -245,7 +245,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			case 'p':
 				//If p is pressed, pause the processing on the AWS node and have the controller print the current turn that is being processed.
 				//If p is pressed again resume the processing and have the controller print Continuing.
-				var pauseRes stubs.Response
+				var pauseRes stubs.BrokerResponse
 
 				//added: Temporarily stop the Alive ticker to reduce pause contention
 				// (EngineCount scans the entire world and may hold the mutex for a long time, so stop before handling 'p')
@@ -254,7 +254,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				ticker = time.NewTicker(2 * time.Second)
 
 				//added: Send toggle RPC request to the server
-				if err := client.Call(stubs.EnginePaused, stubs.Request{}, &pauseRes); err != nil {
+				if err := client.Call(stubs.BrokerPause, stubs.BrokerRequest{}, &pauseRes); err != nil {
 					log.Fatal("fail to toggle pause: ", err)
 				}
 				//change paused state as long as press p
