@@ -201,7 +201,7 @@ func (b *Broker) runLoop(req stubs.BrokerRequest) {
 	b.mu.Unlock()
 }
 
-func (b *Broker) Start(req stubs.BrokerRequest, res stubs.BrokerResponse) error {
+func (b *Broker) Start(req stubs.BrokerRequest, res *stubs.BrokerResponse) error {
 	b.mu.Lock()
 	if b.run {
 		b.mu.Unlock()

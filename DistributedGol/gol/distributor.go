@@ -42,8 +42,9 @@ func saveCurWorld(p Params, c distributorChannels, world [][]uint8, turn int) {
 
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
+
 	//connect with AWS server
-	server := "3.91.159.142:8050"
+	server := "98.84.150.12:8050"
 	client, err := rpc.Dial("tcp", server)
 	if err != nil {
 		log.Fatal("Dialing: ", err)
@@ -69,6 +70,24 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 	turn := 0
 	c.events <- StateChange{turn, Executing}
+
+	if p.Turns == 0 {
+		saveCurWorld(p, c, world, 0)
+		aliveCells := []util.Cell{}
+		for y := 0; y < p.ImageHeight; y++ {
+			for x := 0; x < p.ImageWidth; x++ {
+				if world[y][x] == 255 {
+					aliveCells = append(aliveCells, util.Cell{X: x, Y: y})
+				}
+			}
+		}
+		c.events <- FinalTurnComplete{CompletedTurns: 0, Alive: aliveCells}
+		c.ioCommand <- ioCheckIdle
+		<-c.ioIdle
+		c.events <- StateChange{0, Quitting}
+		close(c.events)
+		return
+	}
 
 	//create RPC
 	req := stubs.BrokerRequest{
@@ -177,7 +196,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//Run ExecuteGol asynchronously so the key input loop can start immediately
 	rpcDone := make(chan error, 1)
 	go func() {
-		rpcDone <- client.Call(stubs.BrokerStart, req, res)
+		rpcDone <- client.Call(stubs.BrokerStart, req, &res)
 	}()
 
 	for {
