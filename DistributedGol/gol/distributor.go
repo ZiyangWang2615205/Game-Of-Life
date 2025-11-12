@@ -40,6 +40,12 @@ func saveCurWorld(p Params, c distributorChannels, world [][]uint8, turn int) {
 	}
 }
 
+func handleError(err error) {
+	if err != nil {
+		fmt.Println("there is a error :", err)
+	}
+}
+
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//connect with AWS server
@@ -78,8 +84,6 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 		ImageWidth:  p.ImageWidth,
 	}
 
-	var res *stubs.Response = &stubs.Response{}
-
 	//RPC AliveCellsCount
 	ticker := time.NewTicker(2 * time.Second)
 	done := make(chan bool)
@@ -106,39 +110,135 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	}()
 
 	//RPC ExecuteGol
-	err = client.Call(stubs.EngineStart, req, res)
-	if err != nil {
-		log.Fatal("fail to use ExecuteGol: ", err)
+	type execResult struct {
+		res stubs.Response
+		err error // added error to help us deal with it more convenient
+	}
+	execDone := make(chan execResult, 1) // receive all error and result then deal with together
+	go func() {
+		var res stubs.Response
+		err := client.Call(stubs.EngineStart, req, &res)
+		execDone <- execResult{
+			res: res,
+			err: err,
+		}
+	}()
+
+	fetchShot := func() ([][]uint8, int) {
+		var res stubs.Response
+		err := client.Call(stubs.EngineGetWorld, stubs.Request{}, &res)
+		if err != nil {
+			// if error output init graph
+			return world, turn
+		}
+		return res.NewWorld, res.Turn
 	}
 
-	//receive result and updates world & turn
-	world = res.NewWorld
-	//stop the time ticker
-	done <- true
+	paused := false
+	for {
+		select {
+		case key := <-keyPresses:
+			switch key {
+			case 's':
+				shot, t := fetchShot()
+				saveCurWorld(p, c, shot, t)
+			case 'p':
+				if !paused {
+					var r stubs.Response
+					err = client.Call(stubs.EnginePause, stubs.Request{}, &r)
+					handleError(err)
+					c.events <- StateChange{
+						CompletedTurns: turn,
+						NewState:       Paused,
+					}
+					paused = true
+				} else {
+					var r stubs.Response
+					err = client.Call(stubs.EngineResume, stubs.Request{}, &r)
+					handleError(err)
+					c.events <- StateChange{
+						CompletedTurns: r.Turn,
+						NewState:       Executing,
+					}
+					paused = false
+				}
 
-	saveCurWorld(p, c, world, p.Turns)
+			case 'q':
+				shot, t := fetchShot()
+				saveCurWorld(p, c, shot, t)
+				// Make sure that the Io has finished any output before exiting.
+				c.ioCommand <- ioCheckIdle
+				<-c.ioIdle
+				done <- true
+				c.events <- StateChange{turn, Quitting}
+				// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
+				close(c.events)
 
-	// TODO: Report the final state using FinalTurnCompleteEvent.
-	aliveCells := []util.Cell{}
-	for y := 0; y < p.ImageHeight; y++ {
-		for x := 0; x < p.ImageWidth; x++ {
-			if world[y][x] == 255 {
-				aliveCells = append(aliveCells, util.Cell{
-					X: x,
-					Y: y,
-				})
+			case 'k':
+				shot, t := fetchShot()
+				saveCurWorld(p, c, shot, t)
+				var r stubs.Response
+				err = client.Call(stubs.EngineKill, stubs.Request{}, &r)
+				handleError(err)
+				done <- true
+				// TODO: Report the final state using FinalTurnCompleteEvent.
+				finalTurn := r.Turn
+				finalWorld := shot
+				if r.NewWorld != nil {
+					finalWorld = r.NewWorld
+				}
+
+				aliveCells := []util.Cell{}
+				for y := 0; y < p.ImageHeight; y++ {
+					for x := 0; x < p.ImageWidth; x++ {
+						if finalWorld[y][x] == 255 {
+							aliveCells = append(aliveCells, util.Cell{
+								X: x,
+								Y: y,
+							})
+						}
+					}
+				}
+
+				c.events <- FinalTurnComplete{CompletedTurns: finalTurn, Alive: aliveCells}
+				// Make sure that the Io has finished any output before exiting.
+				c.ioCommand <- ioCheckIdle
+				<-c.ioIdle
+				c.events <- StateChange{turn, Quitting}
+				// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
+				close(c.events)
 			}
+		case r := <-execDone:
+			//normal termination
+			done <- true
+			//don't forget to deal with error
+			if r.err != nil {
+				log.Fatal("ExecuteGol failed: ", r.err)
+			}
+			//updates world and turn
+			world = r.res.NewWorld
+			turn = r.res.Turn
+			saveCurWorld(p, c, world, turn)
+			// TODO: Report the final state using FinalTurnCompleteEvent.
+			aliveCells := []util.Cell{}
+			for y := 0; y < p.ImageHeight; y++ {
+				for x := 0; x < p.ImageWidth; x++ {
+					if world[y][x] == 255 {
+						aliveCells = append(aliveCells, util.Cell{
+							X: x,
+							Y: y,
+						})
+					}
+				}
+			}
+
+			c.events <- FinalTurnComplete{CompletedTurns: turn, Alive: aliveCells}
+			// Make sure that the Io has finished any output before exiting.
+			c.ioCommand <- ioCheckIdle
+			<-c.ioIdle
+			c.events <- StateChange{turn, Quitting}
+			// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
+			close(c.events)
 		}
 	}
-
-	c.events <- FinalTurnComplete{CompletedTurns: p.Turns, Alive: aliveCells}
-
-	// Make sure that the Io has finished any output before exiting.
-	c.ioCommand <- ioCheckIdle
-	<-c.ioIdle
-
-	c.events <- StateChange{turn, Quitting}
-
-	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
-	close(c.events)
 }

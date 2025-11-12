@@ -9,12 +9,14 @@ import (
 	"uk.ac.bris.cs/gameoflife/stubs"
 )
 
-// currentWorld used for check alive cells nums
-var currentWorld [][]uint8
-
-// currentTurn used for check current turn
-var currentTurn int
-var mu sync.Mutex
+var (
+	currentWorld [][]uint8
+	currentTurn  int
+	paused       bool
+	killed       bool
+	mu           sync.Mutex
+	cond         = sync.NewCond(&mu)
+)
 
 // calcAliveNeighbours counts the number of alive neighbours
 func calcAliveNeighbours(x, y int, world [][]uint8, height, width int) int {
@@ -64,8 +66,24 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 	height := req.ImageHeight
 	width := req.ImageWidth
 
+	mu.Lock()
+	killed = false
+	paused = false
+	mu.Unlock()
+
 	turn := 0
 	for turn < turns {
+		//deal with pause and kill keyPress logic
+		mu.Lock()
+		for paused && !killed {
+			cond.Wait()
+		}
+		if killed {
+			mu.Unlock()
+			break
+		}
+		mu.Unlock()
+
 		//create new world to store next state
 		newWorld := make([][]uint8, height)
 		for i := range newWorld {
@@ -108,9 +126,57 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 	}
 	//send result to response pointer
 	res.NewWorld = world
+	res.Turn = currentTurn
 	return nil
 }
 
+//deal with keyPress execution
+
+func (e *Engine) Pause(req stubs.Request, res *stubs.Response) error {
+	mu.Lock()
+	defer mu.Unlock()
+	paused = true
+	res.OK = true
+	res.Turn = currentTurn
+	return nil
+}
+
+func (e *Engine) Resume(req stubs.Request, res *stubs.Response) error {
+	mu.Lock()
+	defer mu.Unlock()
+	paused = false
+	cond.Broadcast()
+	res.OK = true
+	res.Turn = currentTurn
+	return nil
+}
+
+func (e *Engine) Kill(req stubs.Request, res *stubs.Response) error {
+	mu.Lock()
+	defer mu.Unlock()
+	killed = true
+	paused = false
+	cond.Broadcast()
+	res.Turn = currentTurn
+	res.OK = true
+	return nil
+}
+
+func (e *Engine) GetWorld(req stubs.Request, res *stubs.Response) error {
+	mu.Lock()
+	defer mu.Unlock()
+	height := len(currentWorld)
+	width := len(currentWorld[0])
+	//make copyWorld to record current world shot
+	copyWorld := make([][]uint8, height)
+	for i := range copyWorld {
+		copyWorld[i] = make([]uint8, width)
+		copy(copyWorld[i], currentWorld[i])
+	}
+	res.NewWorld = copyWorld
+	res.Turn = currentTurn
+	return nil
+}
 func main() {
 	//gain the port
 	pAddr := flag.String("port", "8030", "Port to listen on")
