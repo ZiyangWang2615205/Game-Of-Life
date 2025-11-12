@@ -49,7 +49,7 @@ func handleError(err error) {
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//connect with AWS server
-	server := "98.93.248.212:8030"
+	server := "18.215.163.205:8030"
 	client, err := rpc.Dial("tcp", server)
 	if err != nil {
 		log.Fatal("Dialing: ", err)
@@ -157,7 +157,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 					err = client.Call(stubs.EngineResume, stubs.Request{}, &r)
 					handleError(err)
 					c.events <- StateChange{
-						CompletedTurns: r.Turn,
+						CompletedTurns: 0, // while restart there are not completed turns
 						NewState:       Executing,
 					}
 					paused = false
@@ -171,8 +171,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				<-c.ioIdle
 				done <- true
 				c.events <- StateChange{turn, Quitting}
-				// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
-				close(c.events)
+				return
 
 			case 'k':
 				shot, t := fetchShot()
@@ -206,7 +205,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				<-c.ioIdle
 				c.events <- StateChange{turn, Quitting}
 				// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
-				close(c.events)
+				return
 			}
 		case r := <-execDone:
 			//normal termination
@@ -236,9 +235,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			// Make sure that the Io has finished any output before exiting.
 			c.ioCommand <- ioCheckIdle
 			<-c.ioIdle
-			c.events <- StateChange{turn, Quitting}
-			// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
-			close(c.events)
+			//delete all close(c.events) in order to prevent channel closed when server still running
 		}
 	}
 }
