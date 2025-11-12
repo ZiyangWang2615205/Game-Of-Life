@@ -91,6 +91,11 @@ func (b *Broker) fail(err error) {
 
 func (b *Broker) runLoop(req stubs.BrokerRequest) {
 	addrs := req.Workers
+
+	if len(addrs) == 0 {
+		addrs = defaultWorkers
+	}
+
 	//create workers
 	wc := make([]wcli, len(addrs))
 	for i, addr := range addrs {
@@ -177,7 +182,7 @@ func (b *Broker) runLoop(req stubs.BrokerRequest) {
 
 		newWorld := make([][]uint8, b.height)
 		for _, r := range res {
-			if r.err != nil {
+			if r.err != nil || len(r.rowRes) == 0 {
 				continue
 			}
 			for y := 0; y < r.endY-r.startY; y++ {

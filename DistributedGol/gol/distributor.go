@@ -44,7 +44,7 @@ func saveCurWorld(p Params, c distributorChannels, world [][]uint8, turn int) {
 func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 	//connect with AWS server
-	server := "98.84.150.12:8050"
+	server := "localhost:8050"
 	client, err := rpc.Dial("tcp", server)
 	if err != nil {
 		log.Fatal("Dialing: ", err)
@@ -68,12 +68,13 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 		}
 	}
 
-	turn := 0
-	c.events <- StateChange{turn, Executing}
-
+	// ✅ 快速处理 0-turn 特例
 	if p.Turns == 0 {
+		// 输出当前世界图像
 		saveCurWorld(p, c, world, 0)
-		aliveCells := []util.Cell{}
+
+		// 计算活细胞坐标
+		aliveCells := make([]util.Cell, 0)
 		for y := 0; y < p.ImageHeight; y++ {
 			for x := 0; x < p.ImageWidth; x++ {
 				if world[y][x] == 255 {
@@ -81,13 +82,23 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				}
 			}
 		}
+
+		// 通知 GUI/测试框架执行完成
 		c.events <- FinalTurnComplete{CompletedTurns: 0, Alive: aliveCells}
+
+		// 等 IO 输出完毕
 		c.ioCommand <- ioCheckIdle
 		<-c.ioIdle
+
+		// 通知退出
 		c.events <- StateChange{0, Quitting}
+
 		close(c.events)
 		return
 	}
+
+	turn := 0
+	c.events <- StateChange{turn, Executing}
 
 	//create RPC
 	req := stubs.BrokerRequest{
