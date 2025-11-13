@@ -1,4 +1,4 @@
-package broker
+package main
 
 import (
 	"flag"
@@ -33,15 +33,15 @@ func (b *Broker) AliveCellsCount(req stubs.Request, res *stubs.Response) error {
 	return b.forward("AliveCellsCount", stubs.EngineCount, stubs.Request{}, res)
 }
 
-func (b *Broker) Pause(req stubs.Request, res *stubs.Response) error {
+func (b *Broker) SaveCurrent(req stubs.Request, res *stubs.Response) error {
 	return b.forward("Save", stubs.EngineSave, stubs.Request{}, res)
 }
 
-func (b *Broker) Resume(req stubs.Request, res *stubs.Response) error {
+func (b *Broker) ShutDowne(req stubs.Request, res *stubs.Response) error {
 	return b.forward("Shutdown", stubs.EngineOver, stubs.Request{}, res)
 }
 
-func (b *Broker) Kill(req stubs.Request, res *stubs.Response) error {
+func (b *Broker) Paused(req stubs.Request, res *stubs.Response) error {
 	return b.forward("Pause", stubs.EnginePaused, stubs.Request{}, res)
 }
 
