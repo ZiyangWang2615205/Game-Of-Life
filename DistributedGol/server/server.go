@@ -40,6 +40,17 @@ func calcAliveNeighbours(x, y int, world [][]uint8, height, width int) int {
 	return count
 }
 
+func deepCopy(world [][]uint8) [][]uint8 {
+	h := len(world)
+	w := len(world[0])
+	newW := make([][]uint8, h)
+	for i := range newW {
+		newW[i] = make([]uint8, w)
+		copy(newW[i], world[i])
+	}
+	return newW
+}
+
 type Engine struct{}
 
 func (e *Engine) AliveCellsCount(req stubs.Request, res *stubs.Response) error {
@@ -61,7 +72,7 @@ func (e *Engine) AliveCellsCount(req stubs.Request, res *stubs.Response) error {
 
 func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 	// gain the param
-	world := req.World
+	world := deepCopy(req.World)
 	turns := req.Turn
 	height := req.ImageHeight
 	width := req.ImageWidth
@@ -123,7 +134,7 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 
 		mu.Lock()
 		currentTurn = turn
-		currentWorld = world
+		currentWorld = deepCopy(world)
 		mu.Unlock()
 	}
 	//send result to response pointer
