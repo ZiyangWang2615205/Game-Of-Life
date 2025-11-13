@@ -133,7 +133,7 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 		turn++
 
 		mu.Lock()
-		currentTurn = turn
+		currentTurn++
 		currentWorld = deepCopy(world)
 		mu.Unlock()
 	}

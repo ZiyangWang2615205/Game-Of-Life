@@ -49,7 +49,7 @@ func handleError(err error) {
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//connect with AWS server
-	server := "3.80.37.13:8030"
+	server := "54.91.38.226:8030"
 	client, err := rpc.Dial("tcp", server)
 	if err != nil {
 		log.Fatal("Dialing: ", err)
