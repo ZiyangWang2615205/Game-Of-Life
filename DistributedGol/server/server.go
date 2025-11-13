@@ -55,18 +55,20 @@ type Engine struct{}
 
 func (e *Engine) AliveCellsCount(req stubs.Request, res *stubs.Response) error {
 	mu.Lock()
-	defer mu.Unlock()
+	curWorld := currentWorld
+	curTurn := currentTurn
+	mu.Unlock()
 	count := 0
-	for row := 0; row < len(currentWorld); row++ {
-		for col := 0; col < len(currentWorld[0]); col++ {
-			if currentWorld[row][col] == 255 {
+	for row := 0; row < len(curWorld); row++ {
+		for col := 0; col < len(curWorld[0]); col++ {
+			if curWorld[row][col] == 255 {
 				count++
 			}
 		}
 	}
 
 	res.AliveCells = count
-	res.Turn = currentTurn
+	res.Turn = curTurn
 	return nil
 }
 

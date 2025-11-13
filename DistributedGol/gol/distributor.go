@@ -94,7 +94,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				var aliveRes stubs.Response
 				err = client.Call(stubs.EngineCount, stubs.Request{}, &aliveRes)
 				if err != nil {
-					log.Fatal("fail to use AliveCellsCount: ", err)
+					log.Printf("AliveCellsCount failed: %v", err)
 				}
 				//send the AliveCellsCount event
 				c.events <- AliveCellsCount{
