@@ -69,6 +69,8 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 	mu.Lock()
 	killed = false
 	paused = false
+	currentTurn = 0
+	currentWorld = world
 	mu.Unlock()
 
 	turn := 0
