@@ -81,7 +81,7 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 	killed = false
 	paused = false
 	currentTurn = 0
-	currentWorld = world
+	currentWorld = deepCopy(world)
 	mu.Unlock()
 
 	turn := 0
@@ -138,7 +138,7 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 		mu.Unlock()
 	}
 	//send result to response pointer
-	res.NewWorld = world
+	res.NewWorld = deepCopy(currentWorld)
 	res.Turn = currentTurn
 	return nil
 }
