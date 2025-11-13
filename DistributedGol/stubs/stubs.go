@@ -23,3 +23,16 @@ type Response struct {
 	Turn       int
 	OK         bool // added for control Pause/Resume/Kill
 }
+
+var WorkerCompute = "Worker.Compute"
+
+type SliceRequest struct {
+	Slice      [][]uint8
+	AboveRow   []uint8
+	BelowRow   []uint8
+	ImageWidth int
+}
+
+type SliceResponse struct {
+	NewSlice [][]uint8
+}
