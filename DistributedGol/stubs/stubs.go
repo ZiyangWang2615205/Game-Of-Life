@@ -2,6 +2,8 @@ package stubs
 
 var EngineStart = "Engine.ExecuteGol"
 var EngineCount = "Engine.AliveCellsCount"
+
+// key interaction RPC
 var EngineSave = "Engine.SaveCurrent"
 var EngineOver = "Engine.ShutDown"
 var EnginePaused = "Engine.Paused"
