@@ -1,88 +1,10 @@
-# import pandas as pd
-# import matplotlib.pyplot as plt
-# import seaborn as sns
-
-
-
-# with open("results.csv", "r") as f_in, open("parsed_results.csv", "w") as f_out:
-#     # 새 CSV 헤더
-#     f_out.write("name,sec_per_op,CI\n")
-#     for line in f_in:
-#         line = line.strip()
-#         # 우리가 필요로 하는 진짜 벤치마크 결과만 필터링
-#         if line.startswith("Gol/"):
-#             f_out.write(line + "\n")
-
-
-# df = pd.read_csv("parsed_results.csv")
-
-
-# # remove "Gol/" prefix
-# df["bench"] = df["name"].str.replace("Gol/", "", regex=False)
-
-
-# df["config"] = df["bench"].str.extract(r"(.+)-\d+-\d+")
-# df["threads"] = df["bench"].str.extract(r".+-(\d+)-\d+").astype(int)
-# df["cpu"] = df["bench"].str.extract(r".+-(\d+)$").astype(int)
-
-# df[["width", "height", "turns"]] = df["config"].str.extract(r"(\d+)x(\d+)x(\d+)")
-# df[["width", "height", "turns"]] = df[["width", "height", "turns"]].astype(int)
-
-# df["time_sec"] = df["sec_per_op"]
-
-# # generate graphs
-# sns.set(style="whitegrid")
-
-# board_sizes = df[["width", "height"]].drop_duplicates()
-
-# sns.set(style="whitegrid")
-
-# board_sizes = df[["width", "height"]].drop_duplicates()
-
-# for _, row in board_sizes.iterrows():
-#     w, h = row["width"], row["height"]
-
-#     subset = df[(df["width"] == w) & (df["height"] == h)]
-
-#     plt.figure(figsize=(12, 6))
-
-#     for t in sorted(subset["turns"].unique()):
-#         s = subset[subset["turns"] == t].sort_values("threads")
-#         plt.plot(
-#             s["threads"],
-#             s["time_sec"],
-#             marker="o",
-#             label=f"{t} turns"
-#         )
-
-#     plt.title(f"Game of Life Benchmark: {w}x{h}")
-#     plt.xlabel("Worker Threads")
-#     plt.ylabel("Time (seconds)")
-#     plt.legend(title="Turns")
-#     plt.grid(True, linestyle="--", alpha=0.5)
-#     plt.tight_layout()
-
-#     outname = f"plot_{w}x{h}_allturns_line.png"
-#     plt.savefig(outname)
-#     plt.close()
-
-#     print(f"Saved: {outname}")
-
-
-# print("All plots generated.")
-
-# # to run on linux/ubuntu
-# # python3 -m venv .venv
-# # source .venv/bin/activate
-# # pip install pandas matplotlib seaborn
-
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# ==========================
+
 # Load & Filter CSV
-# ==========================
+
 with open("results.csv", "r") as f_in, open("parsed_results.csv", "w") as f_out:
     f_out.write("name,sec_per_op,CI\n")
     for line in f_in:
@@ -92,9 +14,9 @@ with open("results.csv", "r") as f_in, open("parsed_results.csv", "w") as f_out:
 
 df = pd.read_csv("parsed_results.csv")
 
-# ==========================
+
 # Parse benchmark fields
-# ==========================
+
 df["bench"] = df["name"].str.replace("Gol/", "", regex=False)
 df["config"] = df["bench"].str.extract(r"(.+)-\d+-\d+")
 df["threads"] = df["bench"].str.extract(r".+-(\d+)-\d+").astype(int)
@@ -107,9 +29,8 @@ sns.set(style="whitegrid")
 
 board_sizes = df[["width", "height"]].drop_duplicates()
 
-# ==========================
-# (1) Original line plots
-# ==========================
+# (1) Benchmark line plots
+
 for _, row in board_sizes.iterrows():
     w, h = row["width"], row["height"]
 
@@ -132,14 +53,14 @@ for _, row in board_sizes.iterrows():
     plt.grid(True, linestyle="--", alpha=0.5)
     plt.tight_layout()
 
-    outname = f"plot_{w}x{h}.png"
+    outname = f"benchmark_{w}x{h}.png"
     plt.savefig(outname)
     plt.close()
     print(f"Saved: {outname}")
 
-# ==========================
+
 # (2) Speedup & Efficiency plots
-# ==========================
+
 def compute_speedup(df_board):
     """Compute speedup per turn count."""
     speedup_data = []
@@ -201,3 +122,8 @@ for _, row in board_sizes.iterrows():
     print(f"Saved: {outname}")
 
 print("All plots generated.")
+
+# to run on linux/ubuntu
+# python3 -m venv .venv
+# source .venv/bin/activate
+# pip install pandas matplotlib seaborn
