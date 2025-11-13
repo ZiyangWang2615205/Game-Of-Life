@@ -93,7 +93,7 @@ func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
 	// }()
 
 	turn := 0
-	for turn < turns {
+	for turn < turns { // weak point (runtime increasing from here but I don't have a time.)
 		//added: Actually block here while paused
 		mu.Lock()
 		for paused {
