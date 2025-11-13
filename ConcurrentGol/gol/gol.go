@@ -6,6 +6,8 @@ type Params struct {
 	Threads     int
 	ImageWidth  int
 	ImageHeight int
+
+	BenchmarkMode bool // added for benchmark
 }
 
 // Run starts the processing of Game of Life. It should initialise channels and goroutines.
