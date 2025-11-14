@@ -32,8 +32,8 @@ type Broker struct {
 }
 
 // deepCopyWorld creates a deep copy of a [][]uint8 world.
-// SaveCurrent에서 스냅샷을 안전하게 돌려주기 위해 사용한다.
-func deepCopyWorld(src [][]uint8) [][]uint8 {
+// SaveCurrent에서 스냅샷을 안정적으로 돌려주기 위해 사용한다.
+func deepCopyWorld(src [][]uint8) [][]uint8 { // 음....
 	h := len(src)
 	if h == 0 {
 		return nil
