@@ -31,22 +31,6 @@ type Broker struct {
 	cond     *sync.Cond
 }
 
-// deepCopyWorld creates a deep copy of a [][]uint8 world.
-// SaveCurrent / ShutDown에서 스냅샷을 안정적으로 돌려주기 위해 사용한다.
-func deepCopyWorld(src [][]uint8) [][]uint8 {
-	h := len(src)
-	if h == 0 {
-		return nil
-	}
-	dst := make([][]uint8, h)
-	for y := 0; y < h; y++ {
-		w := len(src[y])
-		dst[y] = make([]uint8, w)
-		copy(dst[y], src[y])
-	}
-	return dst
-}
-
 // dialWorkers는 콤마로 구분된 주소 목록을 받아 모든 워커에 RPC 연결을 맺습니다.
 func dialWorkers(addrs []string) ([]*rpc.Client, error) { // [NEW]
 	clients := make([]*rpc.Client, 0, len(addrs))
@@ -221,30 +205,23 @@ func (b *Broker) AliveCellsCount(_ stubs.Request, res *stubs.Response) error { /
 	return nil
 }
 
-// SaveCurrent는 현재 월드를 스냅샷으로 반환합니다.
-func (b *Broker) SaveCurrent(_ stubs.Request, res *stubs.Response) error {
+// SaveCurrent는 현재 월드를 그대로 반환합니다.
+func (b *Broker) SaveCurrent(_ stubs.Request, res *stubs.Response) error { // [NEW]
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// 현재 curWorld를 깊은 복사해서 돌려줘야,
-	// 시뮬레이션이 계속 진행되더라도 PGM 출력에 사용되는 world가 변하지 않는다.
-	res.NewWorld = deepCopyWorld(b.curWorld)
+	res.NewWorld = b.curWorld
 	res.Turn = b.curTurn
 	return nil
 }
 
 // ShutDown은 메인 루프를 멈추고, 필요하다면 워커에게도 종료를 알릴 수 있습니다.
-// ShutDown은 메인 루프를 멈추고, 종료 시점 월드 스냅샷을 반환한다.
-func (b *Broker) ShutDown(_ stubs.Request, res *stubs.Response) error {
+func (b *Broker) ShutDown(_ stubs.Request, res *stubs.Response) error { // [NEW]
 	b.mu.Lock()
-	// 시뮬레이션 루프 중단 플래그 설정
 	b.running = false
 	if b.cond != nil {
 		b.cond.Broadcast()
 	}
-	// 현재 월드 스냅샷 캡처
-	snap := deepCopyWorld(b.curWorld)
-	turn := b.curTurn
 	b.mu.Unlock()
 
 	// 선택: 워커에게도 Shutdown RPC를 보낼 수 있음 (필수 아님)
@@ -252,8 +229,7 @@ func (b *Broker) ShutDown(_ stubs.Request, res *stubs.Response) error {
 		_ = cli.Call(stubs.WorkerShutdown, struct{}{}, &struct{}{})
 	}
 
-	res.NewWorld = snap
-	res.Turn = turn
+	res.Turn = b.curTurn
 	return nil
 }
 
