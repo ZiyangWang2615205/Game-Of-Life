@@ -275,6 +275,7 @@ func (b *Broker) SaveCurrent(_ stubs.Request, res *stubs.Response) error {
 
 // ShutDown은 메인 루프를 멈추고, 필요하다면 워커에게도 종료를 알릴 수 있습니다.
 func (b *Broker) ShutDown(_ stubs.Request, res *stubs.Response) error { // [NEW]
+	b.mu.Lock()
 	snap := deepCopyWorld(b.curWorld)
 	turn := b.curTurn
 
