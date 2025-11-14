@@ -144,6 +144,13 @@ func (b *Broker) ExecuteGol(req stubs.Request, res *stubs.Response) error { // [
 			break
 		}
 		b.mu.Unlock()
+		//-----------------------------------------------------------------------------
+		b.mu.Lock() // turn is proceeded after pause so added this block to check
+		if b.paused {
+			b.cond.Wait()
+		}
+		b.mu.Unlock()
+		//-----------------------------------------------------------------------------------
 
 		// fan-out: 각 워커에 stripe + halo 전송
 		type stripeResult struct {

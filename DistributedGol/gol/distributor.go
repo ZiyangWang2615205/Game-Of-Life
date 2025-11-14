@@ -43,7 +43,7 @@ func saveCurWorld(p Params, c distributorChannels, world [][]uint8, turn int) {
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//connect with AWS server
-	server := "54.242.228.102:8030"
+	server := "23.20.202.80:8030"
 	client, err := rpc.Dial("tcp", server)
 	if err != nil {
 		log.Fatal("Dialing: ", err)
@@ -199,6 +199,11 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			switch key {
 			case 's':
 				//If s is pressed, the controller should generate a PGM file with the current state of the board.
+				// pause 먼저 강제
+				var pauseRes stubs.Response
+				_ = client.Call(stubs.EnginePaused, stubs.Request{}, &pauseRes)
+
+				time.Sleep(100 * time.Millisecond) // broker가 pause 적용할 시간 확보
 				var saveRes stubs.Response
 				err := client.Call(stubs.EngineSave, stubs.Request{}, &saveRes)
 				if err != nil {
@@ -207,6 +212,11 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				saveCurWorld(p, c, saveRes.NewWorld, saveRes.Turn)
 
 			case 'q':
+				// pause 먼저 강제
+				var pauseRes stubs.Response
+				_ = client.Call(stubs.EnginePaused, stubs.Request{}, &pauseRes)
+
+				time.Sleep(100 * time.Millisecond) // broker가 pause 적용할 시간 확보
 				var saveRes stubs.Response
 				if err := client.Call(stubs.EngineSave, stubs.Request{}, &saveRes); err == nil {
 					// 최신 상태 저장
@@ -229,6 +239,13 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 			case 'k':
 				//If k is pressed, all components of the distributed system are shut down cleanly, and the system outputs a PGM image of the latest state.
+
+				// pause 먼저 강제
+				var pauseRes stubs.Response
+				_ = client.Call(stubs.EnginePaused, stubs.Request{}, &pauseRes)
+
+				time.Sleep(100 * time.Millisecond) // broker가 pause 적용할 시간 확보
+
 				var overRes stubs.Response
 				_ = client.Call(stubs.EngineOver, stubs.Request{}, &overRes)
 				saveCurWorld(p, c, overRes.NewWorld, overRes.Turn)
