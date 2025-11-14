@@ -43,7 +43,7 @@ func saveCurWorld(p Params, c distributorChannels, world [][]uint8, turn int) {
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//connect with AWS server
-	server := "23.20.202.80:8030"
+	server := "23.20.202.80:8030" // ip of AWS instance of broker!
 	client, err := rpc.Dial("tcp", server)
 	if err != nil {
 		log.Fatal("Dialing: ", err)
@@ -199,8 +199,6 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			switch key {
 			case 's':
 				//If s is pressed, the controller should generate a PGM file with the current state of the board.
-
-				time.Sleep(100 * time.Millisecond) // broker가 pause 적용할 시간 확보
 				var saveRes stubs.Response
 				err := client.Call(stubs.EngineSave, stubs.Request{}, &saveRes)
 				if err != nil {
@@ -209,15 +207,13 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				saveCurWorld(p, c, saveRes.NewWorld, saveRes.Turn)
 
 			case 'q':
-
-				time.Sleep(100 * time.Millisecond) // broker가 pause 적용할 시간 확보
 				var saveRes stubs.Response
 				if err := client.Call(stubs.EngineSave, stubs.Request{}, &saveRes); err == nil {
-					// 최신 상태 저장
+					// save current world
 					saveCurWorld(p, c, saveRes.NewWorld, saveRes.Turn)
 				}
 
-				// Alive ticker 중단
+				// stop Alive ticker
 				done <- true
 
 				// IO 작업 완료 대기
@@ -233,9 +229,6 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 			case 'k':
 				//If k is pressed, all components of the distributed system are shut down cleanly, and the system outputs a PGM image of the latest state.
-
-				time.Sleep(100 * time.Millisecond) // broker가 pause 적용할 시간 확보
-
 				var overRes stubs.Response
 				_ = client.Call(stubs.EngineOver, stubs.Request{}, &overRes)
 				saveCurWorld(p, c, overRes.NewWorld, overRes.Turn)
@@ -275,35 +268,4 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 		}
 	} // end for loop
 
-	// The block below has been moved to the rpcDone case
-	//receive result and updates world & turn
-	// world = res.NewWorld
-	// //stop the time ticker
-	// done <- true
-	//
-	// saveCurWorld(p, c, world, p.Turns)
-	//
-	// // TODO: Report the final state using FinalTurnCompleteEvent.
-	// aliveCells := []util.Cell{}
-	// for y := 0; y < p.ImageHeight; y++ {
-	// 	for x := 0; x < p.ImageWidth; x++ {
-	// 		if world[y][x] == 255 {
-	// 			aliveCells = append(aliveCells, util.Cell{
-	// 				X: x,
-	// 				Y: y,
-	// 			})
-	// 		}
-	// 	}
-	// }
-	//
-	// c.events <- FinalTurnComplete{CompletedTurns: p.Turns, Alive: aliveCells}
-	//
-	// // Make sure that the Io has finished any output before exiting.
-	// c.ioCommand <- ioCheckIdle
-	// <-c.ioIdle
-	//
-	// c.events <- StateChange{turn, Quitting}
-	//
-	// // Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
-	// close(c.events)
 }
