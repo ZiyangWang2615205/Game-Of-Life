@@ -1,158 +1,217 @@
-#!/usr/bin/env python3
-import csv
-import math
 import re
-
-import matplotlib.pyplot as plt
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-RESULTS_CSV = "results.csv"
+# 1) results.csv 에서 Gol/ 라인만 추출 + sec_per_op/CI 파싱해서 parsed_results.csv 생성
+with open("results.csv", "r") as f_in, open("parsed_results.csv", "w") as f_out:
+    f_out.write("name,sec_per_op,CI\n")
 
+    for line in f_in:
+        line = line.strip()
+        if not line.startswith("Gol/"):
+            continue
 
-def load_results(path: str) -> pd.DataFrame:
-    """
-    results.csv 에서 분산 GoL 벤치마크 결과를 읽어온다.
+        parts = [p.strip() for p in line.split(",")]
 
-    기대하는 name 형식:
-        Gol/<width>x<height>x<turns>-<run>-<workers>
-      예: Gol/16x16x1-1-8
-    """
-    rows = []
+        name = parts[0]
 
-    with open(path, newline="") as f:
-        reader = csv.reader(f)
+        sec = None
+        ci = ""
 
-        for fields in reader:
-            # goos, goarch 같은 헤더 줄 / 빈 줄 건너뛰기
-            if len(fields) < 3:
+        for token in parts[1:]:
+            if token == "":
                 continue
+            if sec is None:
+                try:
+                    sec = float(token)
+                    continue
+                except ValueError:
+                    pass
+            if sec is not None and ci == "":
+                ci = token
+                break
 
-            name, sec_op, ci = fields[0], fields[1], fields[2]
+        if sec is None:
+            continue
 
-            # 헤더 행 건너뛰기
-            if name == "name" or name.strip() == "":
-                continue
+        f_out.write(f"{name},{sec},{ci}\n")
 
-            # 우리가 원하는 벤치마크 행만 사용
-            if not name.startswith("Gol/"):
-                continue
-
-            m = re.match(r"Gol/(\d+)x(\d+)x(\d+)-(\d+)-(\d+)", name)
-            if not m:
-                # 형식이 다르면 그냥 무시 (경고만 찍고 싶으면 print)
-                # print("name format not matched:", name)
-                continue
-
-            width, height, turns, run, workers = map(int, m.groups())
-
-            try:
-                sec = float(sec_op)
-            except ValueError:
-                # 잘못된 값이면 스킵
-                continue
-
-            try:
-                ci_val = float(ci)
-            except ValueError:
-                ci_val = math.nan
-
-            rows.append(
-                {
-                    "name": name,
-                    "width": width,
-                    "height": height,
-                    "turns": turns,
-                    "run": run,
-                    "workers": workers,
-                    "sec_per_op": sec,
-                    "ci": ci_val,
-                }
-            )
-
-    if not rows:
-        raise ValueError(
-            "No benchmark rows parsed. results.csv 에 Gol/.. 형식의 행이 있는지 확인해."
-        )
-
-    return pd.DataFrame(rows)
+df = pd.read_csv("parsed_results.csv")
+df["sec_per_op"] = pd.to_numeric(df["sec_per_op"], errors="coerce")
+df = df.dropna(subset=["sec_per_op"])
 
 
-def plot_time_vs_turns(df: pd.DataFrame, out_prefix: str = "plot_dist"):
-    """
-    각 보드 크기(16x16, 64x64, 512x512)에 대해
-    x축: 턴 수 (1, 100, 50 등이 있다면 그대로 사용)
-    y축: 전체 시뮬레이션 시간 (sec/op)
-    으로 그래프를 그린다.
-    """
-    # (width, height) 조합 목록
-    boards = (
-        df[["width", "height"]]
-        .drop_duplicates()
-        .sort_values(["width", "height"])
-        .itertuples(index=False, name=None)
-    )
+# 2) parsed_results.csv 로드
+df = pd.read_csv("parsed_results.csv")
 
-    for width, height in boards:
-        sub = df[(df["width"] == width) & (df["height"] == height)]
+# float 보장
+df["sec_per_op"] = pd.to_numeric(df["sec_per_op"], errors="coerce")
+df = df.dropna(subset=["sec_per_op"])
 
-        turns_list = sorted(sub["turns"].unique())
 
-        plt.figure(figsize=(8, 5))
+# 3) 벤치마크 이름 파싱 준비
+# 기대 형식: Gol/<width>x<height>x<turns>-<nodes>-<cpu> (예: Gol/512x512x100-3-8-8)
+df["bench"] = df["name"].str.replace("Gol/", "", regex=False)
 
-        # 1) 개별 run 을 약간의 x축 jitter 를 주어 산점도로 표시
-        for i, t in enumerate(turns_list):
-            t_sub = sub[sub["turns"] == t]
-            x_center = t
+pattern = re.compile(r"^(\d+)x(\d+)x(\d+)-(\d+)-(\d+)$")
 
-            # 살짝 좌우로 흔들어서 겹치지 않게
-            jitter = (pd.Series(range(len(t_sub))) - len(t_sub) / 2) / len(t_sub)
-            x_vals = x_center + 0.3 * jitter
+# name 컬럼에서 바로 width, height, turns, nodes, cpu 추출
+# 예: Gol/512x512x100-3-8-8
+m = df["name"].str.extract(r"Gol/(\d+)x(\d+)x(\d+)-(\d+)-(\d+)")
 
-            plt.scatter(
-                x_vals,
-                t_sub["sec_per_op"],
-                alpha=0.7,
-                label=f"{t} turns runs" if i == 0 else None,
-            )
+# 매칭 안 된 행(NaN)은 버림
+m = m.dropna()
 
-        # 2) 턴별 평균 시간 선으로 연결
-        mean_times = [sub[sub["turns"] == t]["sec_per_op"].mean() for t in turns_list]
+# 열 이름 부여
+m.columns = ["width", "height", "turns", "nodes", "cpu"]
+
+# 정수형으로 변환
+m = m.astype(int)
+
+# df도 같은 index만 남기고 붙이기
+df = df.loc[m.index].copy()
+df[["width", "height", "turns", "nodes", "cpu"]] = m
+
+
+# 기존 코드와 호환을 위해 threads = nodes 로 둠
+df["threads"] = df["nodes"]
+df["time_sec"] = df["sec_per_op"]
+
+sns.set(style="whitegrid")
+
+# 보드 크기 종류
+board_sizes = df[["width", "height"]].drop_duplicates()
+
+# ---------------------------------------------------------------------
+# (1) 시간 vs 노드수 그래프
+# ---------------------------------------------------------------------
+for _, row in board_sizes.iterrows():
+    w, h = row["width"], row["height"]
+
+    subset = df[(df["width"] == w) & (df["height"] == h)]
+
+    plt.figure(figsize=(12, 6))
+
+    for t in sorted(subset["turns"].unique()):
+        s = subset[subset["turns"] == t].sort_values("nodes")
         plt.plot(
-            turns_list,
-            mean_times,
+            s["nodes"],
+            s["time_sec"],
             marker="o",
-            linewidth=2,
+            label=f"{t} turns",
         )
 
-        workers = int(sub["workers"].iloc[0])
+    plt.title(f"Game of Life Benchmark: {w}x{h}")
+    plt.xlabel("Worker Nodes")
+    plt.ylabel("Time (seconds)")
+    plt.legend(title="Turns")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.tight_layout()
 
-        plt.xlabel("Turns")
-        plt.ylabel("Time per run (seconds)")
-        plt.title(
-            f"Distributed Game of Life – Board {width}x{height} (workers = {workers})"
+    outname = f"benchmark_{w}x{h}.png"
+    plt.savefig(outname)
+    plt.close()
+    print(f"Saved: {outname}")
+
+# ---------------------------------------------------------------------
+# (2) Speedup / Efficiency 계산 함수
+# ---------------------------------------------------------------------
+def compute_speedup(df_board: pd.DataFrame) -> pd.DataFrame:
+    """
+    각 보드에 대해 turns 별로 speedup 계산.
+    - nodes == 1 이 있으면 그걸 baseline (T1)으로 사용
+    - 없으면 가장 작은 nodes 를 baseline 으로 사용
+    """
+    speedup_data = []
+
+    for t in sorted(df_board["turns"].unique()):
+        subset = df_board[df_board["turns"] == t].sort_values("nodes")
+        if subset.empty:
+            continue
+
+        if (subset["nodes"] == 1).any():
+            t1 = subset[subset["nodes"] == 1]["time_sec"].iloc[0]
+        else:
+            t1 = subset["time_sec"].iloc[0]
+
+        subset = subset.copy()
+        subset["speedup"] = t1 / subset["time_sec"]
+        speedup_data.append(subset)
+
+    if not speedup_data:
+        return pd.DataFrame()
+
+    return pd.concat(speedup_data, ignore_index=True)
+
+
+def compute_efficiency(df_speed: pd.DataFrame) -> pd.DataFrame:
+    df_eff = df_speed.copy()
+    df_eff["efficiency"] = df_eff["speedup"] / df_eff["nodes"]
+    return df_eff
+
+# ---------------------------------------------------------------------
+# (3) Speedup / Efficiency 플롯
+# ---------------------------------------------------------------------
+for _, row in board_sizes.iterrows():
+    w, h = row["width"], row["height"]
+    df_board = df[(df["width"] == w) & (df["height"] == h)]
+
+    # ---- Speedup ----
+    df_speed = compute_speedup(df_board)
+    if df_speed.empty:
+        print(f"[경고] {w}x{h} 보드에 대해 speedup 계산 가능한 데이터 없음. (건너뜀)")
+        continue
+
+    plt.figure(figsize=(12, 6))
+    for t in sorted(df_speed["turns"].unique()):
+        s = df_speed[df_speed["turns"] == t].sort_values("nodes")
+        plt.plot(
+            s["nodes"],
+            s["speedup"],
+            marker="o",
+            label=f"{t} turns",
         )
-        plt.xticks(turns_list)
-        plt.grid(True, linestyle="--", alpha=0.3)
-        plt.tight_layout()
 
-        fname = f"{out_prefix}_{width}x{height}.png"
-        plt.savefig(fname, dpi=150)
-        plt.close()
-        print(f"Saved: {fname}")
+    plt.title(f"Speedup Plot: {w}x{h}")
+    plt.xlabel("Worker Nodes")
+    plt.ylabel("Speedup (T1 / Tn)")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.legend(title="Turns")
+    plt.tight_layout()
 
+    outname = f"speedup_{w}x{h}.png"
+    plt.savefig(outname)
+    plt.close()
+    print(f"Saved: {outname}")
 
-def main():
-    df = load_results(RESULTS_CSV)
+    # ---- Efficiency ----
+    df_eff = compute_efficiency(df_speed)
 
-    # 간단히 무엇이 들어있는지 터미널에 확인용으로 찍어볼 수 있음
-    print("Loaded rows:", len(df))
-    print(df.groupby(["width", "height", "turns"]).size())
+    plt.figure(figsize=(12, 6))
+    for t in sorted(df_eff["turns"].unique()):
+        s = df_eff[df_eff["turns"] == t].sort_values("nodes")
+        plt.plot(
+            s["nodes"],
+            s["efficiency"],
+            marker="o",
+            label=f"{t} turns",
+        )
 
-    plot_time_vs_turns(df)
+    plt.title(f"Efficiency Plot: {w}x{h}")
+    plt.xlabel("Worker Nodes")
+    plt.ylabel("Efficiency (Speedup / Nodes)")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.legend(title="Turns")
+    plt.tight_layout()
 
+    outname = f"efficiency_{w}x{h}.png"
+    plt.savefig(outname)
+    plt.close()
+    print(f"Saved: {outname}")
 
-if __name__ == "__main__":
-    main()
+print("All plots generated.")
+
 
 # to run on linux/ubuntu
 # python3 -m venv .venv

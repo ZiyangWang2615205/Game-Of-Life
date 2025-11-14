@@ -1,0 +1,60 @@
+goos: linux
+goarch: amd64
+pkg: uk.ac.bris.cs/gameoflife/tests
+cpu: 11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz
+BenchmarkGol/16x16x1-2-8-8         	       1	 178509383 ns/op
+BenchmarkGol/16x16x1-2-8-8         	       1	 181151833 ns/op
+BenchmarkGol/16x16x1-2-8-8         	       1	 174139611 ns/op
+BenchmarkGol/16x16x1-2-8-8         	       1	 180533475 ns/op
+BenchmarkGol/16x16x1-2-8-8         	       1	 179117226 ns/op
+BenchmarkGol/16x16x1-2-8-8         	       1	 172689794 ns/op
+BenchmarkGol/16x16x50-2-8-8        	       1	 205349302 ns/op
+BenchmarkGol/16x16x50-2-8-8        	       1	 213130075 ns/op
+BenchmarkGol/16x16x50-2-8-8        	       1	 204032838 ns/op
+BenchmarkGol/16x16x50-2-8-8        	       1	 209265792 ns/op
+BenchmarkGol/16x16x50-2-8-8        	       1	 208288329 ns/op
+BenchmarkGol/16x16x50-2-8-8        	       1	 211606518 ns/op
+BenchmarkGol/16x16x100-2-8-8       	       1	 246552980 ns/op
+BenchmarkGol/16x16x100-2-8-8       	       1	 249703046 ns/op
+BenchmarkGol/16x16x100-2-8-8       	       1	 247248121 ns/op
+BenchmarkGol/16x16x100-2-8-8       	       1	 256025631 ns/op
+BenchmarkGol/16x16x100-2-8-8       	       1	 252630881 ns/op
+BenchmarkGol/16x16x100-2-8-8       	       1	 250911200 ns/op
+BenchmarkGol/64x64x1-2-8-8         	       1	 188429644 ns/op
+BenchmarkGol/64x64x1-2-8-8         	       1	 183426613 ns/op
+BenchmarkGol/64x64x1-2-8-8         	       1	 177961014 ns/op
+BenchmarkGol/64x64x1-2-8-8         	       1	 185789181 ns/op
+BenchmarkGol/64x64x1-2-8-8         	       1	 187337180 ns/op
+BenchmarkGol/64x64x1-2-8-8         	       1	 186612627 ns/op
+BenchmarkGol/64x64x50-2-8-8        	       1	 221260682 ns/op
+BenchmarkGol/64x64x50-2-8-8        	       1	 233672787 ns/op
+BenchmarkGol/64x64x50-2-8-8        	       1	 240679987 ns/op
+BenchmarkGol/64x64x50-2-8-8        	       1	 231767134 ns/op
+BenchmarkGol/64x64x50-2-8-8        	       1	 225630866 ns/op
+BenchmarkGol/64x64x50-2-8-8        	       1	 236814427 ns/op
+BenchmarkGol/64x64x100-2-8-8       	       1	 256803543 ns/op
+BenchmarkGol/64x64x100-2-8-8       	       1	 260642999 ns/op
+BenchmarkGol/64x64x100-2-8-8       	       1	 274040841 ns/op
+BenchmarkGol/64x64x100-2-8-8       	       1	 264321225 ns/op
+BenchmarkGol/64x64x100-2-8-8       	       1	 338072380 ns/op
+BenchmarkGol/64x64x100-2-8-8       	       1	 324373179 ns/op
+BenchmarkGol/512x512x1-2-8-8       	       1	1751833326 ns/op
+BenchmarkGol/512x512x1-2-8-8       	       1	1268891686 ns/op
+BenchmarkGol/512x512x1-2-8-8       	       1	1616445787 ns/op
+BenchmarkGol/512x512x1-2-8-8       	       1	1973097671 ns/op
+BenchmarkGol/512x512x1-2-8-8       	       1	2234248850 ns/op
+BenchmarkGol/512x512x1-2-8-8       	       1	2300198019 ns/op
+BenchmarkGol/512x512x50-2-8-8      	       1	1719513475 ns/op
+BenchmarkGol/512x512x50-2-8-8      	       1	1629874171 ns/op
+BenchmarkGol/512x512x50-2-8-8      	       1	1785854274 ns/op
+BenchmarkGol/512x512x50-2-8-8      	       1	1767191088 ns/op
+BenchmarkGol/512x512x50-2-8-8      	       1	1681206548 ns/op
+BenchmarkGol/512x512x50-2-8-8      	       1	1723074282 ns/op
+BenchmarkGol/512x512x100-2-8-8     	       1	2167016394 ns/op
+BenchmarkGol/512x512x100-2-8-8     	       1	2198690468 ns/op
+BenchmarkGol/512x512x100-2-8-8     	       1	2268752144 ns/op
+BenchmarkGol/512x512x100-2-8-8     	       1	3014855550 ns/op
+BenchmarkGol/512x512x100-2-8-8     	       1	3210995041 ns/op
+BenchmarkGol/512x512x100-2-8-8     	       1	2491272959 ns/op
+PASS
+ok  	uk.ac.bris.cs/gameoflife/tests	44.898s
