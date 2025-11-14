@@ -91,6 +91,25 @@ func partitionRows(H, numWorkers int) [][2]int { // [NEW]
 // ExecuteGol은 컨트롤러로부터 전체 월드를 받아,
 // 매 턴마다 워커들에게 stripe + halo를 보내고 결과를 수집합니다.
 func (b *Broker) ExecuteGol(req stubs.Request, res *stubs.Response) error { // [NEW]
+	b.mu.Lock()
+	b.running = false // 이전 실행 루프에게 종료 신호
+	if b.cond != nil {
+		b.cond.Broadcast()
+	}
+	b.mu.Unlock()
+
+	// 잠깐 기다릴지, 아니면 바로 덮어쓸지는 과제에서 자유지만,
+	// 최소한 상태를 명시적으로 reset:
+	b.mu.Lock()
+	b.curWorld = req.World
+	b.curTurn = 0
+	b.paused = false
+	b.running = true
+	if b.cond == nil {
+		b.cond = sync.NewCond(&b.mu)
+	}
+	b.mu.Unlock()
+
 	H, W := req.ImageHeight, req.ImageWidth
 	if H == 0 || W == 0 {
 		res.NewWorld = req.World

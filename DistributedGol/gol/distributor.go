@@ -128,8 +128,8 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 		has   bool
 		world [][]uint8
 	}
-	pendingFinalize := pend{} // Holds data if rpcDone arrives during pause, processed on resume
-	lastPausedTurn := 0       // Used to send Executing event when resuming
+	//pendingFinalize := pend{} // Holds data if rpcDone arrives during pause, processed on resume
+	lastPausedTurn := 0 // Used to send Executing event when resuming
 
 	finalize := func(finalWorld [][]uint8, finalTurn int) {
 		if finalized {
@@ -189,7 +189,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			// If paused, delay finalization. otherwise, finalize immediately
 			if pausedLocal {
 				// Keep result pending to finalize right after resume
-				pendingFinalize = pend{has: true, world: res.NewWorld}
+				//pendingFinalize = pend{has: true, world: res.NewWorld}
 			} else {
 				finalize(res.NewWorld, p.Turns)
 				return
@@ -207,23 +207,23 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				saveCurWorld(p, c, saveRes.NewWorld, saveRes.Turn)
 
 			case 'q':
-				//If q is pressed, close the controller client program without causing an error on the Gol server.
-
-				//added: Save the latest state before exiting (works even while paused)
 				var saveRes stubs.Response
 				if err := client.Call(stubs.EngineSave, stubs.Request{}, &saveRes); err == nil {
+					// 최신 상태 저장
 					saveCurWorld(p, c, saveRes.NewWorld, saveRes.Turn)
 				}
-				// Old code was only sent done <- true without saving the state
-				// done <- true
+
+				// Alive ticker 중단
 				done <- true
-				// Make sure that the Io has finished any output before exiting.
+
+				// IO 작업 완료 대기
 				c.ioCommand <- ioCheckIdle
 				<-c.ioIdle
 
-				c.events <- StateChange{turn, Quitting}
+				// 종료 이벤트는 실제 저장한 턴 기준으로 내보내야 한다
+				quitTurn := saveRes.Turn
+				c.events <- StateChange{quitTurn, Quitting}
 
-				// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
 				close(c.events)
 				return
 
@@ -242,63 +242,23 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				return
 
 			case 'p':
-				//If p is pressed, pause the processing on the AWS node and have the controller print the current turn that is being processed.
-				//If p is pressed again resume the processing and have the controller print Continuing.
 				var pauseRes stubs.Response
-
-				//added: Temporarily stop the Alive ticker to reduce pause contention
-				// (EngineCount scans the entire world and may hold the mutex for a long time, so stop before handling 'p')
-				done <- true
-				// Create a new ticker instance (for restarting later)
-				ticker = time.NewTicker(2 * time.Second)
-
-				//added: Send toggle RPC request to the server
 				if err := client.Call(stubs.EnginePaused, stubs.Request{}, &pauseRes); err != nil {
 					log.Fatal("fail to toggle pause: ", err)
 				}
-				//added: Even if the server’s IsPaused flag behaves inversely, client maintains its own toggle for consistency
+
+				// 로컬 플래그 토글
 				newPaused := !pausedLocal
 				pausedLocal = newPaused
-				if newPaused {
-					// On the first 'p' press: always send a Paused event
-					// fmt.Printf("Turn %d is being processed\n", pauseRes.Turn)
-					// c.events <- StateChange{pauseRes.Turn, Paused}
 
-					//changed to: Record the turn number locally
+				if newPaused {
 					lastPausedTurn = pauseRes.Turn
 					fmt.Printf("Turn %d is being processed\n", lastPausedTurn)
 					c.events <- StateChange{lastPausedTurn, Paused}
-
-					//added: Alive events are not needed while paused; restarting is optional
-					// (The test only checks key events, but we restart for consistency)
-					startAliveTicker()
-
+					// ticker는 그대로 둔다 (필요하면 Alive 이벤트 무시만 할 수도 있음)
 				} else {
-					// On resume the test expects an Executing event
-					// If the simulation has already finished and rpcDone is waiting,
-					// send Executing event first to satisfy the test and then finalize immediately
-					if pendingFinalize.has && !finalized {
-						// Emit the Executing event first to meet the test expectation
-						// fmt.Println("Continuing")
-						// c.events <- StateChange{pauseRes.Turn, Executing}
-
-						//changed to: Send Executing event using the last paused turn number
-						fmt.Println("Continuing")
-						c.events <- StateChange{lastPausedTurn, Executing}
-
-						finalize(pendingFinalize.world, p.Turns)
-						return
-					}
-					// fmt.Println("Continuing")
-					// c.events <- StateChange{pauseRes.Turn, Executing}
-
-					//changed to: When resuming normally, also send Executing event with lastPausedTurn
 					fmt.Println("Continuing")
 					c.events <- StateChange{lastPausedTurn, Executing}
-
-					//added: Restart the Alive ticker after resuming
-					startAliveTicker()
-
 				}
 
 			default:
