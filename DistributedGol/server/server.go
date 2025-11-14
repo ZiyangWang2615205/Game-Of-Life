@@ -9,17 +9,12 @@ import (
 	"uk.ac.bris.cs/gameoflife/stubs"
 )
 
-// ===== NEW: stateless worker node for multi-node Game of Life =====
-//
-// 이 파일은 원래 단일 노드 엔진(Engine)을 제공하던 서버 대신,
-// 브로커가 호출하는 Worker RPC 서비스를 제공합니다.
-// 컨트롤러(distributor.go)는 여전히 브로커만 'Engine'으로 보고,
-// 개별 워커와는 직접 통신하지 않습니다.
+//This file provides the Worker RPC service called by the broker, replacing the original single-node Engine server.
+//The controller (distributor.go) still treats only the broker as the Engine and never communicates directly with individual workers.
 
 type Worker struct{} // [NEW]
 
-// countNeighbours는 주어진 셀의 8-이웃 생존 셀 수를 계산합니다.
-// Stripe 내부와 위/아래 halo 행을 함께 사용합니다.
+// countNeighbours calculates the number of live neighbors (8-neighborhood) for a given cell, using both the stripe and its top/bottom halo rows.
 func countNeighbours(x, y int, stripe [][]uint8, width int, haloTop, haloBottom []uint8) int { // [NEW]
 	h := len(stripe)
 	count := 0
@@ -48,8 +43,8 @@ func countNeighbours(x, y int, stripe [][]uint8, width int, haloTop, haloBottom 
 	return count
 }
 
-// Step는 하나의 stripe에 대해 Game of Life를 한 턴 진행합니다.
-func (w *Worker) Step(req stubs.StripeRequest, res *stubs.StripeResponse) error { // [NEW]
+// Step advances one turn of Game of Life for a single stripe.
+func (w *Worker) Step(req stubs.StripeRequest, res *stubs.StripeResponse) error {
 	stripe := req.Stripe
 	h := req.LocalH
 	wth := req.ImageWidth
@@ -87,32 +82,29 @@ func (w *Worker) Step(req stubs.StripeRequest, res *stubs.StripeResponse) error 
 	return nil
 }
 
-// Ping / Shutdown은 브로커가 워커 상태를 확인·종료할 때 사용 가능합니다.
-// 과제 필수는 아니지만 인터페이스 확장을 위해 추가했습니다.
-func (w *Worker) Ping(_ struct{}, _ *struct{}) error { // [NEW]
+// Ping/Shutdown can be used by the broker to check or terminate a worker.
+func (w *Worker) Ping(_ struct{}, _ *struct{}) error {
 	return nil
 }
 
-func (w *Worker) Shutdown(_ struct{}, _ *struct{}) error { // [NEW]
-	// 실제 종료는 main의 Listen 루프를 끊는 식으로 구현할 수도 있지만,
-	// 과제에서는 단순 no-op으로 두어도 무방합니다.
+func (w *Worker) Shutdown(_ struct{}, _ *struct{}) error {
 	return nil
 }
 
 func main() {
-	pAddr := flag.String("port", "8031", "Port to listen on") // [NEW] 기본 포트를 워커용으로 분리
+	pAddr := flag.String("port", "8031", "Port to listen on")
 	flag.Parse()
 
-	if err := rpc.RegisterName("Worker", &Worker{}); err != nil { // [NEW]
+	if err := rpc.RegisterName("Worker", &Worker{}); err != nil {
 		log.Fatal("failed to register Worker:", err)
 	}
 
-	ln, err := net.Listen("tcp", ":"+*pAddr) // [NEW]
+	ln, err := net.Listen("tcp", ":"+*pAddr)
 	if err != nil {
 		log.Fatal("worker listen error:", err)
 	}
 	defer ln.Close()
 
-	log.Printf("Worker listening on %s\n", *pAddr) // [NEW]
+	log.Printf("Worker listening on %s\n", *pAddr)
 	rpc.Accept(ln)
 }

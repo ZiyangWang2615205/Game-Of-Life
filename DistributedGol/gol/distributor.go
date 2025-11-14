@@ -216,11 +216,11 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				// stop Alive ticker
 				done <- true
 
-				// IO 작업 완료 대기
+				// wiat for IO work finish
 				c.ioCommand <- ioCheckIdle
 				<-c.ioIdle
 
-				// 종료 이벤트는 실제 저장한 턴 기준으로 내보내야 한다
+				// q event should use the turn that was actually saved.
 				quitTurn := saveRes.Turn
 				c.events <- StateChange{quitTurn, Quitting}
 
@@ -247,7 +247,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 					log.Fatal("fail to toggle pause: ", err)
 				}
 
-				// 로컬 플래그 토글
+				// toggle the local flag
 				newPaused := !pausedLocal
 				pausedLocal = newPaused
 
@@ -255,7 +255,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 					lastPausedTurn = pauseRes.Turn
 					fmt.Printf("Turn %d is being processed\n", lastPausedTurn)
 					c.events <- StateChange{lastPausedTurn, Paused}
-					// ticker는 그대로 둔다 (필요하면 Alive 이벤트 무시만 할 수도 있음)
+					// Keep the ticker running (you can simply ignore Alive events if needed)
 				} else {
 					fmt.Println("Continuing")
 					c.events <- StateChange{lastPausedTurn, Executing}
