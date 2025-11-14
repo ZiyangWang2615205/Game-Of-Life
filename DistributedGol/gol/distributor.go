@@ -199,9 +199,6 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 			switch key {
 			case 's':
 				//If s is pressed, the controller should generate a PGM file with the current state of the board.
-				// pause 먼저 강제
-				var pauseRes stubs.Response
-				_ = client.Call(stubs.EnginePaused, stubs.Request{}, &pauseRes)
 
 				time.Sleep(100 * time.Millisecond) // broker가 pause 적용할 시간 확보
 				var saveRes stubs.Response
@@ -212,9 +209,6 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 				saveCurWorld(p, c, saveRes.NewWorld, saveRes.Turn)
 
 			case 'q':
-				// pause 먼저 강제
-				var pauseRes stubs.Response
-				_ = client.Call(stubs.EnginePaused, stubs.Request{}, &pauseRes)
 
 				time.Sleep(100 * time.Millisecond) // broker가 pause 적용할 시간 확보
 				var saveRes stubs.Response
@@ -239,10 +233,6 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 			case 'k':
 				//If k is pressed, all components of the distributed system are shut down cleanly, and the system outputs a PGM image of the latest state.
-
-				// pause 먼저 강제
-				var pauseRes stubs.Response
-				_ = client.Call(stubs.EnginePaused, stubs.Request{}, &pauseRes)
 
 				time.Sleep(100 * time.Millisecond) // broker가 pause 적용할 시간 확보
 

@@ -12,8 +12,6 @@ import (
 	"uk.ac.bris.cs/gameoflife/stubs"
 )
 
-// ===== NEW: Broker now implements Engine and fans out to multiple workers =====
-//
 // 기존 브로커는 단일 AWS 노드(Engine)에 모든 요청을 그대로 전달하는 역할만 했습니다.
 // 아래 Broker는 컨트롤러(distributor.go) 입장에서는 여전히 'Engine'으로 보이지만,
 // 내부적으로 여러 Worker 노드에 보드를 stripe로 나눠 전달하고 halo exchange를 수행합니다.
@@ -29,6 +27,10 @@ type Broker struct {
 	paused   bool
 	running  bool
 	cond     *sync.Cond
+
+	// 추가: pause 시점 스냅샷
+	snapWorld [][]uint8
+	snapTurn  int
 }
 
 // deepCopyWorld creates a deep copy of a [][]uint8 world.
@@ -144,13 +146,6 @@ func (b *Broker) ExecuteGol(req stubs.Request, res *stubs.Response) error { // [
 			break
 		}
 		b.mu.Unlock()
-		//-----------------------------------------------------------------------------
-		b.mu.Lock() // turn is proceeded after pause so added this block to check
-		if b.paused {
-			b.cond.Wait()
-		}
-		b.mu.Unlock()
-		//-----------------------------------------------------------------------------------
 
 		// fan-out: 각 워커에 stripe + halo 전송
 		type stripeResult struct {
@@ -254,9 +249,22 @@ func (b *Broker) AliveCellsCount(_ stubs.Request, res *stubs.Response) error { /
 // SaveCurrent는 현재 월드를 그대로 반환합니다.
 func (b *Broker) SaveCurrent(_ stubs.Request, res *stubs.Response) error {
 	b.mu.Lock()
-	// curWorld, curTurn의 일관된 스냅샷 확보
-	snap := deepCopyWorld(b.curWorld)
-	turn := b.curTurn
+	// // curWorld, curTurn의 일관된 스냅샷 확보
+	// snap := deepCopyWorld(b.curWorld)
+	// turn := b.curTurn
+	var snap [][]uint8
+	var turn int
+
+	if b.paused && b.snapWorld != nil {
+		// pause 상태라면, pause 직전 스냅샷 기준으로 저장
+		snap = deepCopyWorld(b.snapWorld)
+		turn = b.snapTurn
+	} else {
+		// 그 외에는 현재 curWorld 기준으로 저장
+		snap = deepCopyWorld(b.curWorld)
+		turn = b.curTurn
+	}
+
 	b.mu.Unlock()
 
 	// 락 밖에서 Response 채우기
@@ -288,9 +296,20 @@ func (b *Broker) Paused(_ stubs.Request, res *stubs.Response) error { // [NEW]
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	b.paused = !b.paused
-	if !b.paused && b.cond != nil {
-		b.cond.Broadcast()
+	//b.paused = !b.paused
+	if !b.paused {
+		// 지금부터 pause 상태로 들어감
+		b.paused = true
+
+		// pause 직전 월드/턴 스냅샷 저장
+		b.snapWorld = deepCopyWorld(b.curWorld)
+		b.snapTurn = b.curTurn
+	} else {
+		// pause 해제
+		b.paused = false
+		if b.cond != nil {
+			b.cond.Broadcast()
+		}
 	}
 
 	res.IsPaused = b.paused
