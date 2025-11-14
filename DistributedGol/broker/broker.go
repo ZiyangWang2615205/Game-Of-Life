@@ -31,6 +31,26 @@ type Broker struct {
 	cond     *sync.Cond
 }
 
+// deepCopyWorld creates a deep copy of a [][]uint8 world.
+// SaveCurrent에서 스냅샷을 안전하게 돌려주기 위해 사용한다.
+func deepCopyWorld(src [][]uint8) [][]uint8 {
+	h := len(src)
+	if h == 0 {
+		return nil
+	}
+	dst := make([][]uint8, h)
+	for y := 0; y < h; y++ {
+		row := src[y]
+		if row == nil {
+			continue
+		}
+		w := len(row)
+		dst[y] = make([]uint8, w)
+		copy(dst[y], row)
+	}
+	return dst
+}
+
 // dialWorkers는 콤마로 구분된 주소 목록을 받아 모든 워커에 RPC 연결을 맺습니다.
 func dialWorkers(addrs []string) ([]*rpc.Client, error) { // [NEW]
 	clients := make([]*rpc.Client, 0, len(addrs))
@@ -206,12 +226,16 @@ func (b *Broker) AliveCellsCount(_ stubs.Request, res *stubs.Response) error { /
 }
 
 // SaveCurrent는 현재 월드를 그대로 반환합니다.
-func (b *Broker) SaveCurrent(_ stubs.Request, res *stubs.Response) error { // [NEW]
+func (b *Broker) SaveCurrent(_ stubs.Request, res *stubs.Response) error {
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	// curWorld, curTurn의 일관된 스냅샷 확보
+	snap := deepCopyWorld(b.curWorld)
+	turn := b.curTurn
+	b.mu.Unlock()
 
-	res.NewWorld = b.curWorld
-	res.Turn = b.curTurn
+	// 락 밖에서 Response 채우기
+	res.NewWorld = snap
+	res.Turn = turn
 	return nil
 }
 
