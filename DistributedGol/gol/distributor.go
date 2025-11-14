@@ -168,12 +168,6 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 		finalized = true
 	}
 
-	//added:Run ExecuteGol asynchronously so the key input loop can start imediately
-	// old code : blocking call
-	// err = client.Call(stubs.EngineStart, req, res)
-	// if err != nil {
-	// 	log.Fatal("fail to use ExecuteGol: ", err)
-	// }
 	rpcDone := make(chan error, 1)
 	go func() {
 		rpcDone <- client.Call(stubs.EngineStart, req, res)
