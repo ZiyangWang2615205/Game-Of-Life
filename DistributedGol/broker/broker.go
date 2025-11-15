@@ -354,3 +354,6 @@ func main() {
 	log.Printf("Broker started on %s, workers: %v\n", *port, addrs)
 	rpc.Accept(ln)
 }
+
+// go run broker.go -port 8030 -workers "172.31.73.131:8031, 172.31.64.52:8031, 172.31.78.137:8031, 172.31.69.135:8031"
+// those 4 ip should be private
