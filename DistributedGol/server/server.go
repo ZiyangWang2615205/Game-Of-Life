@@ -91,6 +91,53 @@ func (w *Worker) Shutdown(_ struct{}, _ *struct{}) error {
 	return nil
 }
 
+//deal with keyPress execution
+
+func (e *Engine) Pause(req stubs.Request, res *stubs.Response) error {
+	mu.Lock()
+	defer mu.Unlock()
+	paused = true
+	res.OK = true
+	res.Turn = currentTurn
+	return nil
+}
+
+func (e *Engine) Resume(req stubs.Request, res *stubs.Response) error {
+	mu.Lock()
+	defer mu.Unlock()
+	paused = false
+	cond.Broadcast()
+	res.OK = true
+	res.Turn = currentTurn
+	return nil
+}
+
+func (e *Engine) Kill(req stubs.Request, res *stubs.Response) error {
+	mu.Lock()
+	defer mu.Unlock()
+	killed = true
+	paused = false
+	cond.Broadcast()
+	res.Turn = currentTurn
+	res.OK = true
+	return nil
+}
+
+func (e *Engine) GetWorld(req stubs.Request, res *stubs.Response) error {
+	mu.Lock()
+	defer mu.Unlock()
+	height := len(currentWorld)
+	width := len(currentWorld[0])
+	//make copyWorld to record current world shot
+	copyWorld := make([][]uint8, height)
+	for i := range copyWorld {
+		copyWorld[i] = make([]uint8, width)
+		copy(copyWorld[i], currentWorld[i])
+	}
+	res.NewWorld = copyWorld
+	res.Turn = currentTurn
+	return nil
+}
 func main() {
 	pAddr := flag.String("port", "8031", "Port to listen on")
 	flag.Parse()

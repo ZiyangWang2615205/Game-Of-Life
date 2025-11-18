@@ -40,6 +40,12 @@ func saveCurWorld(p Params, c distributorChannels, world [][]uint8, turn int) {
 	}
 }
 
+func handleError(err error) {
+	if err != nil {
+		fmt.Println("there is a error :", err)
+	}
+}
+
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//connect with AWS server
@@ -77,8 +83,6 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 		ImageHeight: p.ImageHeight,
 		ImageWidth:  p.ImageWidth,
 	}
-
-	var res *stubs.Response = &stubs.Response{}
 
 	//RPC AliveCellsCount
 	ticker := time.NewTicker(2 * time.Second)
