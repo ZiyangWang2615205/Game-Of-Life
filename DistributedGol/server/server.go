@@ -2,37 +2,40 @@ package main
 
 import (
 	"flag"
+	"log"
 	"net"
 	"net/rpc"
-	"sync"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
 )
 
-var (
-	currentWorld [][]uint8
-	currentTurn  int
-	paused       bool
-	killed       bool
-	mu           sync.Mutex
-	cond         = sync.NewCond(&mu)
-)
+//This file provides the Worker RPC service called by the broker, replacing the original single-node Engine server.
+//The controller (distributor.go) still treats only the broker as the Engine and never communicates directly with individual workers.
 
-// calcAliveNeighbours counts the number of alive neighbours
-func calcAliveNeighbours(x, y int, world [][]uint8, height, width int) int {
+type Worker struct{} // [NEW]
+
+// countNeighbours calculates the number of live neighbors (8-neighborhood) for a given cell, using both the stripe and its top/bottom halo rows.
+func countNeighbours(x, y int, stripe [][]uint8, width int, haloTop, haloBottom []uint8) int { // [NEW]
+	h := len(stripe)
 	count := 0
-	offestX := [3]int{-1, 0, 1}
-	offestY := [3]int{-1, 0, 1}
-	for _, dy := range offestY {
-		for _, dx := range offestX {
-			//count except itself
-			if dy == 0 && dx == 0 {
+	for dy := -1; dy <= 1; dy++ {
+		for dx := -1; dx <= 1; dx++ {
+			if dx == 0 && dy == 0 {
 				continue
 			}
-			//calculate neighbour coordinate
-			nY := (y + dy + height) % height
-			nX := (x + dx + width) % width
-			if world[nY][nX] == 255 {
+			nx := (x + dx + width) % width
+			ny := y + dy
+
+			var v uint8
+			switch {
+			case ny < 0:
+				v = haloTop[nx]
+			case ny >= h:
+				v = haloBottom[nx]
+			default:
+				v = stripe[ny][nx]
+			}
+			if v == 255 {
 				count++
 			}
 		}
@@ -40,93 +43,51 @@ func calcAliveNeighbours(x, y int, world [][]uint8, height, width int) int {
 	return count
 }
 
-type Engine struct{}
+// Step advances one turn of Game of Life for a single stripe.
+func (w *Worker) Step(req stubs.StripeRequest, res *stubs.StripeResponse) error {
+	stripe := req.Stripe
+	h := req.LocalH
+	wth := req.ImageWidth
 
-func (e *Engine) AliveCellsCount(req stubs.Request, res *stubs.Response) error {
-	mu.Lock()
-	defer mu.Unlock()
-	count := 0
-	for row := 0; row < len(currentWorld); row++ {
-		for col := 0; col < len(currentWorld[0]); col++ {
-			if currentWorld[row][col] == 255 {
-				count++
+	newStripe := make([][]uint8, h)
+	for y := 0; y < h; y++ {
+		newStripe[y] = make([]uint8, wth)
+	}
+
+	alive := 0
+	for y := 0; y < h; y++ {
+		for x := 0; x < wth; x++ {
+			neigh := countNeighbours(x, y, stripe, wth, req.HaloTop, req.HaloBottom)
+			cur := stripe[y][x]
+			if cur == 255 {
+				if neigh == 2 || neigh == 3 {
+					newStripe[y][x] = 255
+					alive++
+				} else {
+					newStripe[y][x] = 0
+				}
+			} else {
+				if neigh == 3 {
+					newStripe[y][x] = 255
+					alive++
+				} else {
+					newStripe[y][x] = 0
+				}
 			}
 		}
 	}
 
-	res.AliveCells = count
-	res.Turn = currentTurn
+	res.NewStripe = newStripe
+	res.AliveCount = alive
 	return nil
 }
 
-func (e *Engine) ExecuteGol(req stubs.Request, res *stubs.Response) error {
-	// gain the param
-	world := req.World
-	turns := req.Turn
-	height := req.ImageHeight
-	width := req.ImageWidth
+// Ping/Shutdown can be used by the broker to check or terminate a worker.
+func (w *Worker) Ping(_ struct{}, _ *struct{}) error {
+	return nil
+}
 
-	mu.Lock()
-	killed = false
-	paused = false
-	mu.Unlock()
-
-	turn := 0
-	for turn < turns {
-		//deal with pause and kill keyPress logic
-		mu.Lock()
-		for paused && !killed {
-			cond.Wait()
-		}
-		if killed {
-			mu.Unlock()
-			break
-		}
-		mu.Unlock()
-
-		//create new world to store next state
-		newWorld := make([][]uint8, height)
-		for i := range newWorld {
-			newWorld[i] = make([]uint8, width)
-		}
-
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
-				aliveNeighbours := calcAliveNeighbours(x, y, world, height, width)
-				//live cell
-				if world[y][x] == 255 {
-					//any live cell with fewer than two/ more than three live neighbours dies
-					if aliveNeighbours < 2 || aliveNeighbours > 3 {
-						newWorld[y][x] = 0
-					} else {
-						//any live cell with more than three live neighbours dies
-						newWorld[y][x] = 255
-
-					}
-				}
-
-				//die cell
-				if world[y][x] == 0 {
-					if aliveNeighbours == 3 {
-						//any dead cell with exactly three live neighbours becomes alive
-						newWorld[y][x] = 255
-					}
-				}
-			}
-		}
-
-		//updates world
-		world = newWorld
-		turn++
-
-		mu.Lock()
-		currentTurn = turn
-		currentWorld = world
-		mu.Unlock()
-	}
-	//send result to response pointer
-	res.NewWorld = world
-	res.Turn = currentTurn
+func (w *Worker) Shutdown(_ struct{}, _ *struct{}) error {
 	return nil
 }
 
@@ -178,11 +139,21 @@ func (e *Engine) GetWorld(req stubs.Request, res *stubs.Response) error {
 	return nil
 }
 func main() {
-	//gain the port
-	pAddr := flag.String("port", "8030", "Port to listen on")
+	pAddr := flag.String("port", "8031", "Port to listen on")
 	flag.Parse()
-	rpc.Register(&Engine{})
-	ln, _ := net.Listen("tcp", ":"+*pAddr)
+
+	if err := rpc.RegisterName("Worker", &Worker{}); err != nil {
+		log.Fatal("failed to register Worker:", err)
+	}
+
+	ln, err := net.Listen("tcp", ":"+*pAddr)
+	if err != nil {
+		log.Fatal("worker listen error:", err)
+	}
 	defer ln.Close()
+
+	log.Printf("Worker listening on %s\n", *pAddr)
 	rpc.Accept(ln)
 }
+
+//  go run server.go -port 8031

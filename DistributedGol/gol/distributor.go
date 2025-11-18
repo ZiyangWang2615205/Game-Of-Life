@@ -49,7 +49,7 @@ func handleError(err error) {
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//connect with AWS server
-	server := "18.215.163.205:8030"
+	server := "23.20.202.80:8030" // ip of AWS instance of broker!
 	client, err := rpc.Dial("tcp", server)
 	if err != nil {
 		log.Fatal("Dialing: ", err)
@@ -87,155 +87,183 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	//RPC AliveCellsCount
 	ticker := time.NewTicker(2 * time.Second)
 	done := make(chan bool)
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				var aliveRes stubs.Response
-				err = client.Call(stubs.EngineCount, stubs.Request{}, &aliveRes)
-				if err != nil {
-					log.Fatal("fail to use AliveCellsCount: ", err)
-				}
-				//send the AliveCellsCount event
-				c.events <- AliveCellsCount{
-					CompletedTurns: aliveRes.Turn,
-					CellsCount:     aliveRes.AliveCells,
-				}
 
-			case <-done:
-				ticker.Stop()
-				return
+	//added : State tracking to ensure AliveCellsCount reports strictly increasing turn numbers
+	lastAliveTurnSent := -1
+	startAliveTicker := func() {
+		// Restart AliveCellsCount goroutine after pause
+		go func() {
+			for {
+				select {
+				case <-ticker.C:
+					var aliveRes stubs.Response
+					err = client.Call(stubs.EngineCount, stubs.Request{}, &aliveRes)
+					if err != nil {
+						log.Fatal("fail to use AliveCellsCount: ", err)
+					}
+					//send the AliveCellsCount event
+					// old code was always sending data
+					// c.events <- AliveCellsCount{CompletedTurns: aliveRes.Turn, CellsCount: aliveRes.AliveCells}
+
+					//added: Skip events with non-increasing CompletedTurns
+					if aliveRes.Turn <= lastAliveTurnSent {
+						// skip stale or duplicate turn reports
+						continue
+					}
+					lastAliveTurnSent = aliveRes.Turn
+					c.events <- AliveCellsCount{
+						CompletedTurns: aliveRes.Turn,
+						CellsCount:     aliveRes.AliveCells,
+					}
+
+				case <-done:
+					ticker.Stop()
+					return
+				}
+			}
+		}()
+	}
+	startAliveTicker()
+
+	//added: Variables for tracking state and handling finish logic
+	pausedLocal := false // Client-side pause flag, not relying on the server's response
+	finalized := false   // Avoid duplicate finalization
+	type pend struct {
+		has   bool
+		world [][]uint8
+	}
+	//pendingFinalize := pend{} // Holds data if rpcDone arrives during pause, processed on resume
+	lastPausedTurn := 0 // Used to send Executing event when resuming
+
+	finalize := func(finalWorld [][]uint8, finalTurn int) {
+		if finalized {
+			return
+		}
+		//receive result and updates world & turn
+		world = finalWorld
+		//stop the time ticker
+		done <- true
+
+		saveCurWorld(p, c, world, finalTurn)
+
+		// TODO: Report the final state using FinalTurnCompleteEvent.
+		aliveCells := []util.Cell{}
+		for y := 0; y < p.ImageHeight; y++ {
+			for x := 0; x < p.ImageWidth; x++ {
+				if world[y][x] == 255 {
+					aliveCells = append(aliveCells, util.Cell{
+						X: x,
+						Y: y,
+					})
+				}
 			}
 		}
-	}()
 
-	//RPC ExecuteGol
-	type execResult struct {
-		res stubs.Response
-		err error // added error to help us deal with it more convenient
+		c.events <- FinalTurnComplete{CompletedTurns: finalTurn, Alive: aliveCells}
+
+		// Make sure that the Io has finished any output before exiting.
+		c.ioCommand <- ioCheckIdle
+		<-c.ioIdle
+
+		c.events <- StateChange{turn, Quitting}
+
+		// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
+		close(c.events)
+		finalized = true
 	}
-	execDone := make(chan execResult, 1) // receive all error and result then deal with together
+
+	rpcDone := make(chan error, 1)
 	go func() {
-		var res stubs.Response
-		err := client.Call(stubs.EngineStart, req, &res)
-		execDone <- execResult{
-			res: res,
-			err: err,
-		}
+		rpcDone <- client.Call(stubs.EngineStart, req, res)
 	}()
 
-	fetchShot := func() ([][]uint8, int) {
-		var res stubs.Response
-		err := client.Call(stubs.EngineGetWorld, stubs.Request{}, &res)
-		if err != nil {
-			// if error output init graph
-			return world, turn
-		}
-		return res.NewWorld, res.Turn
-	}
-
-	paused := false
-	for {
+	for { // start for loop
 		select {
+		//added: Monitor for simulation completion or error
+		case callErr := <-rpcDone:
+			if callErr != nil {
+				log.Fatal("fail to use ExecuteGol: ", callErr)
+			}
+			// If paused, delay finalization. otherwise, finalize immediately
+			if pausedLocal {
+				// Keep result pending to finalize right after resume
+				//pendingFinalize = pend{has: true, world: res.NewWorld}
+			} else {
+				finalize(res.NewWorld, p.Turns)
+				return
+			}
+
 		case key := <-keyPresses:
 			switch key {
 			case 's':
-				shot, t := fetchShot()
-				saveCurWorld(p, c, shot, t)
-			case 'p':
-				if !paused {
-					var r stubs.Response
-					err = client.Call(stubs.EnginePause, stubs.Request{}, &r)
-					handleError(err)
-					c.events <- StateChange{
-						CompletedTurns: turn,
-						NewState:       Paused,
-					}
-					paused = true
-				} else {
-					var r stubs.Response
-					err = client.Call(stubs.EngineResume, stubs.Request{}, &r)
-					handleError(err)
-					c.events <- StateChange{
-						CompletedTurns: 0, // while restart there are not completed turns
-						NewState:       Executing,
-					}
-					paused = false
+				//If s is pressed, the controller should generate a PGM file with the current state of the board.
+				var saveRes stubs.Response
+				err := client.Call(stubs.EngineSave, stubs.Request{}, &saveRes)
+				if err != nil {
+					log.Fatal("fail to use SaveCurrent: ", err)
 				}
+				saveCurWorld(p, c, saveRes.NewWorld, saveRes.Turn)
 
 			case 'q':
-				shot, t := fetchShot()
-				saveCurWorld(p, c, shot, t)
-				// Make sure that the Io has finished any output before exiting.
+				var saveRes stubs.Response
+				if err := client.Call(stubs.EngineSave, stubs.Request{}, &saveRes); err == nil {
+					// save current world
+					saveCurWorld(p, c, saveRes.NewWorld, saveRes.Turn)
+				}
+
+				// stop Alive ticker
+				done <- true
+
+				// wiat for IO work finish
 				c.ioCommand <- ioCheckIdle
 				<-c.ioIdle
-				done <- true
-				c.events <- StateChange{turn, Quitting}
+
+				// q event should use the turn that was actually saved.
+				quitTurn := saveRes.Turn
+				c.events <- StateChange{quitTurn, Quitting}
+
+				close(c.events)
 				return
 
 			case 'k':
-				shot, t := fetchShot()
-				saveCurWorld(p, c, shot, t)
-				var r stubs.Response
-				err = client.Call(stubs.EngineKill, stubs.Request{}, &r)
-				handleError(err)
+				//If k is pressed, all components of the distributed system are shut down cleanly, and the system outputs a PGM image of the latest state.
+				var overRes stubs.Response
+				_ = client.Call(stubs.EngineOver, stubs.Request{}, &overRes)
+				saveCurWorld(p, c, overRes.NewWorld, overRes.Turn)
+
 				done <- true
-				// TODO: Report the final state using FinalTurnCompleteEvent.
-				finalTurn := r.Turn
-				finalWorld := shot
-				if r.NewWorld != nil {
-					finalWorld = r.NewWorld
-				}
-
-				aliveCells := []util.Cell{}
-				for y := 0; y < p.ImageHeight; y++ {
-					for x := 0; x < p.ImageWidth; x++ {
-						if finalWorld[y][x] == 255 {
-							aliveCells = append(aliveCells, util.Cell{
-								X: x,
-								Y: y,
-							})
-						}
-					}
-				}
-
-				c.events <- FinalTurnComplete{CompletedTurns: finalTurn, Alive: aliveCells}
-				// Make sure that the Io has finished any output before exiting.
 				c.ioCommand <- ioCheckIdle
 				<-c.ioIdle
-				c.events <- StateChange{turn, Quitting}
-				// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
+
+				c.events <- StateChange{overRes.Turn, Quitting}
+				close(c.events)
 				return
-			}
-		case r := <-execDone:
-			//normal termination
-			done <- true
-			//don't forget to deal with error
-			if r.err != nil {
-				log.Fatal("ExecuteGol failed: ", r.err)
-			}
-			//updates world and turn
-			world = r.res.NewWorld
-			turn = r.res.Turn
-			saveCurWorld(p, c, world, turn)
-			// TODO: Report the final state using FinalTurnCompleteEvent.
-			aliveCells := []util.Cell{}
-			for y := 0; y < p.ImageHeight; y++ {
-				for x := 0; x < p.ImageWidth; x++ {
-					if world[y][x] == 255 {
-						aliveCells = append(aliveCells, util.Cell{
-							X: x,
-							Y: y,
-						})
-					}
+
+			case 'p':
+				var pauseRes stubs.Response
+				if err := client.Call(stubs.EnginePaused, stubs.Request{}, &pauseRes); err != nil {
+					log.Fatal("fail to toggle pause: ", err)
 				}
+
+				// toggle the local flag
+				newPaused := !pausedLocal
+				pausedLocal = newPaused
+
+				if newPaused {
+					lastPausedTurn = pauseRes.Turn
+					fmt.Printf("Turn %d is being processed\n", lastPausedTurn)
+					c.events <- StateChange{lastPausedTurn, Paused}
+					// Keep the ticker running (you can simply ignore Alive events if needed)
+				} else {
+					fmt.Println("Continuing")
+					c.events <- StateChange{lastPausedTurn, Executing}
+				}
+
+			default:
+				time.Sleep(100 * time.Millisecond)
 			}
 
-			c.events <- FinalTurnComplete{CompletedTurns: turn, Alive: aliveCells}
-			// Make sure that the Io has finished any output before exiting.
-			c.ioCommand <- ioCheckIdle
-			<-c.ioIdle
-			//delete all close(c.events) in order to prevent channel closed when server still running
 		}
-	}
+	} // end for loop
+
 }
