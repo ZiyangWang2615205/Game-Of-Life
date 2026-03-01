@@ -1,7 +1,7 @@
 # Introduction
-The British mathematician John Horton Conway devised a cellular automaton named ‘The Game of Life’.
+The British mathematician John Horton Conway devised a cellular automaton named `The Game of Life`.
 
-The game resides on a 2-valued 2D matrix, i.e. a binary image, where the cells can either be ‘alive’ (pixel value 255 - white) or ‘dead’ (pixel value 0 - black).
+The game resides on a 2-valued 2D matrix, i.e. a binary image, where the cells can either be `alive` (pixel value 255 - white) or `dead` (pixel value 0 - black).
 
 The game evolution is determined by its initial state and requires no further input.
 
