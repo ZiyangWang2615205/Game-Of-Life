@@ -1,5 +1,7 @@
 # Game of Life — Parallel and Distributed Implementation
 
+![go](https://img.shields.io/badge/Go-00ADD8?style=for-the-badge&logo=go&logoColor=white)
+
 This project implements Conway's Game of Life in Go, with both a parallel single-machine version and a distributed version designed to run across AWS nodes.
 
 The Game of Life is a cellular automaton where each cell on a 2D grid is either alive or dead. At each turn, the next state of every cell is determined by the states of its eight neighbouring cells. This project focuses on implementing the simulation efficiently using Go concurrency, worker goroutines, RPC communication, and distributed computation.
