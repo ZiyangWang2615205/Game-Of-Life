@@ -153,24 +153,9 @@ This was a team project. My main contributions focused on infrastructure, distri
 - Built and configured the AWS server environment used for the distributed implementation.
 - Set up the server-client structure for the distributed Game of Life system.
 - Configured RPC-based communication between local controller and remote computation components.
-- Created and maintained GitHub Actions workflows for automated checks and documentation-related tasks.
-- Built the testing structure used to validate correctness and reliability.
 - Developed benchmark and plotting scripts for analysing performance across different configurations.
 - Contributed to the design and implementation of the distributed computation workflow.
 - Created and structured instruction/documentation pages to explain how to run and use the project.
-
----
-
-## Game Rules
-
-For each turn of the simulation:
-
-- A live cell with fewer than two live neighbours dies.
-- A live cell with two or three live neighbours survives.
-- A live cell with more than three live neighbours dies.
-- A dead cell with exactly three live neighbours becomes alive.
-
-The board uses wraparound edges, meaning the top and bottom edges are connected, and the left and right edges are connected.
 
 ---
 
